@@ -1,0 +1,78 @@
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+    tags: [ 'v*' ]
+  pull_request:
+    branches: [ main ]
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: Validate & package
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate manifest & referenced files
+        run: |
+          node - <<'EOF'
+          const fs = require('fs');
+          const m = JSON.parse(fs.readFileSync('manifest.json', 'utf8'));
+          const required = ['manifest_version', 'name', 'version', 'background', 'action', 'icons'];
+          for (const k of required) if (!(k in m)) throw new Error('manifest missing: ' + k);
+          if (m.manifest_version !== 3) throw new Error('expected Manifest V3');
+          const files = new Set([
+            'background.js', 'offscreen.html', 'offscreen.js', 'options.html', 'options.js',
+            'popup.html', 'popup.js', 'styles.css', 'i18n.js',
+            m.background.service_worker, ...Object.values(m.icons)
+          ]);
+          for (const f of files) if (!fs.existsSync(f)) throw new Error('missing file: ' + f);
+          console.log(`OK - ${m.name} v${m.version} (MV3, ${Object.keys(m.icons).length} icons)`);
+          EOF
+
+      - name: Guard rail (no em-dash in source)
+        run: |
+          SRC=(--include='*.js' --include='*.html' --include='*.css' --include='*.json' --include='*.md' --exclude-dir=.git)
+          if grep -rnP "${SRC[@]}" $'\xe2\x80\x94' .; then
+            echo "::error::em-dash found; use a plain hyphen instead"; exit 1
+          fi
+          echo "OK - no em-dash in source"
+
+      # git archive packages exactly the loadable extension: it honors the
+      # export-ignore rules in .gitattributes (no .github, assets, etc.).
+      - name: Package extension
+        run: |
+          VERSION=$(node -p "require('./manifest.json').version")
+          git archive --format=zip -o "zabbix-noc-alerter-v${VERSION}.zip" HEAD
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: zabbix-noc-alerter
+          path: '*.zip'
+
+  release:
+    name: Release
+    needs: validate
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Package extension
+        run: |
+          VERSION=$(node -p "require('./manifest.json').version")
+          git archive --format=zip -o "zabbix-noc-alerter-v${VERSION}.zip" HEAD
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: Zabbix NOC Alerter ${{ github.ref_name }}
+          body_path: .github/RELEASE_NOTES.md
+          files: '*.zip'

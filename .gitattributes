@@ -1,0 +1,6 @@
+# Repo-only files kept out of the packaged zip (git archive respects export-ignore).
+.github export-ignore
+.gitignore export-ignore
+.gitattributes export-ignore
+assets export-ignore
+assets/** export-ignore
