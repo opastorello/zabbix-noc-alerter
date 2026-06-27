@@ -305,14 +305,21 @@ async function _pollZabbixOnce() {
         fresh.slice(0, MAX_NOTIFS_PER_POLL).forEach(p => notify(p, base));
       }
     }
-    // NAG: re-toca enquanto houver problema NAO-ackado (ate dar ack ou mute)
-    if (config.soundEnabled && config.repeatAlarm) {
+    // NAG: re-alarma enquanto houver problema NAO-ackado (som + notificacao, ate dar ack ou mute)
+    if (config.repeatAlarm && (config.soundEnabled || config.notificationsEnabled)) {
       const nagPool = active.filter(p => p.acknowledged !== '1');
       const gap = Math.max(MIN_POLL_SEC, Number(config.repeatInterval) || 60) * 1000;
       if (nagPool.length && (now - (state.lastAlarmTs || 0)) >= gap) {
         const nagMax = nagPool.reduce((m, p) => Math.max(m, Number(p.severity)), 0);
-        playSound(soundForSeverity(nagMax), config.volume);
+        if (config.soundEnabled) playSound(soundForSeverity(nagMax), config.volume);
+        // re-notifica o problema de maior severidade com id FIXO -> atualiza no lugar (sem flood)
+        if (config.notificationsEnabled) {
+          const top = nagPool.find(p => Number(p.severity) === nagMax) || nagPool[0];
+          notify(top, base, 'zbx-nag');
+        }
         state.lastAlarmTs = now;
+      } else if (!nagPool.length) {
+        chrome.notifications.clear('zbx-nag'); // ackou/resolveu tudo -> some a notificacao do re-alarme
       }
     }
   }
@@ -369,9 +376,11 @@ function dropNotifUrl(id) {
   } catch (e) {}
 }
 
-function notify(p, base) {
+function notify(p, base, fixedId) {
   const sev = Number(p.severity);
-  const id = 'zbx-' + p.eventid + '-' + Date.now();
+  // fixedId (ex.: 'zbx-nag') reusa a MESMA notificacao a cada ciclo do re-alarme,
+  // atualizando no lugar em vez de empilhar uma nova notificacao a cada toque.
+  const id = fixedId || ('zbx-' + p.eventid + '-' + Date.now());
   chrome.notifications.create(id, {
     type: 'basic',
     iconUrl: 'icons/icon128.png',
