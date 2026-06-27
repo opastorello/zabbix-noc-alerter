@@ -31,12 +31,14 @@ right in your browser, while you work on anything else.
 ## Features
 
 - 🔊 **Per-severity sound** with volume and a test button.
-- 🔁 **Re-alarm** while a problem is unacknowledged, until you ack it or mute.
+- 🔁 **Re-alarm** (sound and notification) while a problem is unacknowledged, until you ack it or mute.
+- 🛠️ **Maintenance-aware:** problems in a maintenance window get an MNT tag and stay silent (or hide them).
+- 🔍 **Live filter** in the popup by host or problem name.
 - 🖥️ **Shows the host** in the list and in the notification.
 - ✅ **Acknowledge from the popup** (with a message), and see any existing ack.
 - 🟢 **Resolved notification** when a problem recovers.
 - 🖱️ **Click a problem** to open the exact event in Zabbix.
-- 🔎 **Filters:** minimum severity, max age, exclude by text, hide suppressed/acked.
+- 🔎 **Filters:** minimum severity, max age, exclude by text, hide suppressed/acked/in-maintenance; optional "unseen" badge.
 - 🌐 **Languages:** English, Português, Español, picked automatically from your browser.
 - 🔒 **Nothing hardcoded:** the Zabbix URL (and an optional token) live only in the options.
 

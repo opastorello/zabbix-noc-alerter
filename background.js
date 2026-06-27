@@ -11,6 +11,7 @@ const DEFAULT_CONFIG = {
   pollInterval: 15,       // segundos entre checagens (timer no offscreen permite < 30s)
   repeatAlarm: true,      // re-tocar enquanto houver problema NAO-ackado (nag)
   repeatInterval: 60,     // segundos entre re-toques do nag
+  nagNotify: true,        // alem do som, re-mostrar notificacao a cada re-alarme (nag); off = nag so no som
   minSeverity: 4,         // 0=nao classif 1=info 2=warning 3=average 4=high 5=disaster
   soundEnabled: true,
   notificationsEnabled: true,
@@ -331,14 +332,14 @@ async function _pollZabbixOnce() {
       }
     }
     // NAG: re-alarma enquanto houver problema NAO-ackado (som + notificacao, ate dar ack ou mute)
-    if (config.repeatAlarm && (config.soundEnabled || config.notificationsEnabled)) {
+    if (config.repeatAlarm && (config.soundEnabled || (config.notificationsEnabled && config.nagNotify))) {
       const nagPool = active.filter(p => p.acknowledged !== '1' && !inMaintenance(p)); // manutencao nao re-alarma
       const gap = Math.max(MIN_POLL_SEC, Number(config.repeatInterval) || 60) * 1000;
       if (nagPool.length && (now - (state.lastAlarmTs || 0)) >= gap) {
         const nagMax = nagPool.reduce((m, p) => Math.max(m, Number(p.severity)), 0);
         if (config.soundEnabled) playSound(soundForSeverity(nagMax), config.volume);
         // re-notifica o problema de maior severidade com id FIXO -> atualiza no lugar (sem flood)
-        if (config.notificationsEnabled) {
+        if (config.notificationsEnabled && config.nagNotify) {
           const top = nagPool.find(p => Number(p.severity) === nagMax) || nagPool[0];
           notify(top, base, 'zbx-nag');
         }
