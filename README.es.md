@@ -60,6 +60,8 @@ y consulta la API por problemas activos. Un problema nuevo reproduce un sonido y
 lanza una notificación. No hace falta token; si tu versión no acepta la sesión del
 frontend para escritura (ack), define un token de API en las opciones como respaldo.
 
+**Compatibilidad:** probado en Zabbix 6.0 a 7.4 (la sesión del frontend y todas las llamadas a la API funcionan). Zabbix 8.0 se validará cuando llegue a una versión estable.
+
 ## Privacidad
 
 Habla solo con **tu Zabbix** (la URL que configuraste) y lee la cookie de sesión
