@@ -22,7 +22,8 @@ const DEFAULT_CONFIG = {
   soundSev2: 'beepbeep',  // warning
   soundSev1: 'chime',     // info
   ignoreAckd: false,      // ignorar problemas ja reconhecidos (ack)
-  ignoreSuppressed: true, // ignorar problemas suprimidos
+  ignoreSuppressed: true, // ignorar problemas suprimidos manualmente (por usuario)
+  ignoreMaintenance: true,// ignorar problemas em manutencao (suppression por maintenance window)
   excludePatterns: '',    // esconder problema cujo nome/host contenha qualquer um destes (virgula ou linha)
   maxAgeDays: 0,          // = "Age less than N days" do Zabbix (0 = todos; corta cronicos velhos)
   muted: false,           // mudo temporario (toggle pelo popup)
@@ -183,6 +184,13 @@ async function pollZabbix() {
   } finally { _pollInFlight = false; }
 }
 
+// Em manutencao = suprimido por uma maintenance window (suppression_data com maintenanceid != 0).
+// Distingue do supressao manual (feita por um usuario), que tem maintenanceid 0.
+function inMaintenance(p) {
+  return Array.isArray(p.suppression_data)
+    && p.suppression_data.some(s => s && s.maintenanceid && s.maintenanceid !== '0');
+}
+
 async function _pollZabbixOnce() {
   const base = normalizeUrl(config.zabbixUrl);
   if (!base) { setStatus({ state: 'unconfigured' }); setBadge('', ''); return; }
@@ -200,6 +208,7 @@ async function _pollZabbixOnce() {
     const pget = {
       output: ['eventid', 'objectid', 'name', 'severity', 'clock', 'acknowledged', 'suppressed'],
       selectAcknowledges: ['clock', 'message'],
+      selectSuppressionData: ['maintenanceid'], // distingue manutencao de supressao manual
       recent: false,
       sortfield: ['eventid'],
       sortorder: 'DESC',
@@ -231,7 +240,9 @@ async function _pollZabbixOnce() {
   let active = problems.filter(p => {
     if (Number(p.severity) < Number(config.minSeverity)) return false;
     if (config.ignoreAckd && p.acknowledged === '1') return false;
-    if (config.ignoreSuppressed && p.suppressed === '1') return false;
+    const inMaint = inMaintenance(p);
+    if (config.ignoreMaintenance && inMaint) return false;                          // em manutencao
+    if (config.ignoreSuppressed && p.suppressed === '1' && !inMaint) return false;  // suprimido manualmente
     if (maxAgeMs && (Date.now() - Number(p.clock) * 1000) > maxAgeMs) return false; // esconde cronicos velhos
     return true;
   });
@@ -287,7 +298,8 @@ async function _pollZabbixOnce() {
     freshCount: fresh.length,
     problems: active.slice(0, MAX_PROBLEMS_UI).map(p => ({
       eventid: p.eventid, objectid: p.objectid, hostid: p.hostid || '', name: p.name, host: p.host || '', severity: Number(p.severity),
-      clock: Number(p.clock), acknowledged: p.acknowledged === '1', suppressed: p.suppressed === '1', ackmsg: p.ackmsg || ''
+      clock: Number(p.clock), acknowledged: p.acknowledged === '1', suppressed: p.suppressed === '1',
+      maintenance: inMaintenance(p), ackmsg: p.ackmsg || ''
     }))
   });
 
@@ -296,18 +308,19 @@ async function _pollZabbixOnce() {
   // dispara alerta
   const now = Date.now();
   if (!config.muted) {
-    // NOVOS: som + notificacao imediatos
-    if (fresh.length) {
-      const freshMax = fresh.reduce((m, p) => Math.max(m, Number(p.severity)), 0);
+    // NOVOS: som + notificacao imediatos. Manutencao NAO alarma (so aparece na lista, com a tag MNT).
+    const freshAlert = fresh.filter(p => !inMaintenance(p));
+    if (freshAlert.length) {
+      const freshMax = freshAlert.reduce((m, p) => Math.max(m, Number(p.severity)), 0);
       if (config.soundEnabled) { playSound(soundForSeverity(freshMax), config.volume); state.lastAlarmTs = now; }
       if (config.notificationsEnabled) {
-        fresh.sort((a, b) => Number(b.severity) - Number(a.severity));
-        fresh.slice(0, MAX_NOTIFS_PER_POLL).forEach(p => notify(p, base));
+        freshAlert.sort((a, b) => Number(b.severity) - Number(a.severity));
+        freshAlert.slice(0, MAX_NOTIFS_PER_POLL).forEach(p => notify(p, base));
       }
     }
     // NAG: re-alarma enquanto houver problema NAO-ackado (som + notificacao, ate dar ack ou mute)
     if (config.repeatAlarm && (config.soundEnabled || config.notificationsEnabled)) {
-      const nagPool = active.filter(p => p.acknowledged !== '1');
+      const nagPool = active.filter(p => p.acknowledged !== '1' && !inMaintenance(p)); // manutencao nao re-alarma
       const gap = Math.max(MIN_POLL_SEC, Number(config.repeatInterval) || 60) * 1000;
       if (nagPool.length && (now - (state.lastAlarmTs || 0)) >= gap) {
         const nagMax = nagPool.reduce((m, p) => Math.max(m, Number(p.severity)), 0);
