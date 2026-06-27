@@ -31,12 +31,14 @@ notificação, direto no navegador, enquanto você trabalha em qualquer outra co
 ## Recursos
 
 - 🔊 **Som por severidade** com volume e botão de teste.
-- 🔁 **Re-alarme** enquanto houver problema não reconhecido, até dar ack ou mudo.
+- 🔁 **Re-alarme** (som e notificação) enquanto houver problema não reconhecido, até dar ack ou mudo.
+- 🛠️ **Ciente de manutenção:** problemas em janela de manutenção ganham a tag MNT e ficam silenciosos (ou você esconde).
+- 🔍 **Filtro ao vivo** no popup por host ou nome do problema.
 - 🖥️ **Mostra o host** na lista e na notificação.
 - ✅ **Ack direto do popup** (com mensagem) e mostra o ack existente.
 - 🟢 **Notificação de resolvido** quando um problema recupera.
 - 🖱️ **Clique no problema** abre o evento exato no Zabbix.
-- 🔎 **Filtros:** severidade mínima, idade máxima, excluir por texto, esconder suprimidos/ackados.
+- 🔎 **Filtros:** severidade mínima, idade máxima, excluir por texto, esconder suprimidos/ackados/em manutenção; badge "não vistos" opcional.
 - 🌐 **Idiomas:** English, Português, Español, escolhido automaticamente pelo navegador.
 - 🔒 **Nada hardcoded:** a URL do Zabbix (e um token opcional) ficam só nas opções.
 
