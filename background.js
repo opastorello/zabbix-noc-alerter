@@ -15,6 +15,7 @@ const DEFAULT_CONFIG = {
   soundEnabled: true,
   notificationsEnabled: true,
   notifyResolved: true,   // notificar quando um problema for resolvido (recuperado)
+  badgeUnseen: false,     // badge conta so problemas NOVOS (nao vistos) desde a ultima abertura do popup; zera ao abrir
   volume: 0.8,            // 0..1
   soundSev5: 'klaxon',    // disaster
   soundSev4: 'siren',     // high
@@ -48,6 +49,7 @@ let state = {
   known: new Map(),       // eventid -> {name, host, severity} dos ativos
   notifUrls: {},          // notifId -> url (fast-path em memoria; persistido em storage.session)
   lastAlarmTs: 0,         // ultimo toque de som (pro nag)
+  lastSeenTs: 0,          // quando o popup foi aberto pela ultima vez (base do badge de 'nao vistos')
   authMode: null,         // 'header' | 'body' = modo de auth descoberto (cache; evita 2x request no 6.x)
   status: { state: 'unconfigured' }
 };
@@ -56,8 +58,11 @@ let _pollInFlight = false, _pollAgain = false; // mutex + coalescing do poll
 // =====================================================
 // Init
 // =====================================================
-chrome.storage.local.get(['config'], async (r) => {
+chrome.storage.local.get(['config', 'lastSeenTs'], async (r) => {
   if (r.config) config = { ...DEFAULT_CONFIG, ...r.config };
+  // 1a vez: ancora "visto" no agora (nao marca os problemas ja existentes como novos)
+  state.lastSeenTs = r.lastSeenTs || Date.now();
+  if (!r.lastSeenTs) chrome.storage.local.set({ lastSeenTs: state.lastSeenTs });
   scheduleAlarm();
   await startOffscreenTimer();
   pollZabbix();
@@ -303,7 +308,14 @@ async function _pollZabbixOnce() {
     }))
   });
 
-  setBadge(active.length ? String(active.length) : '', SEV_COLOR[maxSev] || '#97aab3');
+  // badge: total de ativos (padrao) ou so os "nao vistos" desde a ultima abertura do popup
+  if (config.badgeUnseen) {
+    const unseen = active.filter(p => Number(p.clock) * 1000 > state.lastSeenTs);
+    const unseenMax = unseen.reduce((m, p) => Math.max(m, Number(p.severity)), 0);
+    setBadge(unseen.length ? String(unseen.length) : '', SEV_COLOR[unseenMax] || '#97aab3');
+  } else {
+    setBadge(active.length ? String(active.length) : '', SEV_COLOR[maxSev] || '#97aab3');
+  }
 
   // dispara alerta
   const now = Date.now();
@@ -503,6 +515,10 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
   if (msg.action === 'getStatus') {
     sendResponse({ status: state.status, muted: config.muted });
+    // abrir o popup = "vi os problemas atuais" -> zera o badge de nao-vistos
+    state.lastSeenTs = Date.now();
+    chrome.storage.local.set({ lastSeenTs: state.lastSeenTs });
+    if (config.badgeUnseen) setBadge('', '');
     return;
   }
 
