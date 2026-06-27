@@ -8,7 +8,7 @@ let lang = 'pt';
 document.addEventListener('DOMContentLoaded', () => {
   lang = resolveLang(); applyI18n(lang); // idioma na hora: global + estaticos juntos (sem mistura PT/EN)
   const pv = document.getElementById('popVer');
-  if (pv) pv.textContent = 'v' + chrome.runtime.getManifest().version.split('.').slice(0, 2).join('.');
+  if (pv) pv.textContent = 'v' + chrome.runtime.getManifest().version;
   document.getElementById('settingsBtn').addEventListener('click', () => chrome.runtime.openOptionsPage());
   document.getElementById('refreshBtn').addEventListener('click', () => {
     setStatusText(t('checking', lang));

@@ -16,8 +16,8 @@ const CHK = ['soundEnabled', 'notificationsEnabled', 'notifyResolved', 'repeatAl
 document.addEventListener('DOMContentLoaded', () => {
   populateLangSelect(document.getElementById('lang')); // idiomas gerados do i18n.js (auto-extensivel)
   applyI18n(resolveLang()); // aplica o idioma na hora (evita flash sem acento)
-  // versao: fonte unica = manifest.json (exibe major.minor)
-  const ver = 'v' + chrome.runtime.getManifest().version.split('.').slice(0, 2).join('.');
+  // versao: fonte unica = manifest.json (versao completa, ex.: v0.1.1)
+  const ver = 'v' + chrome.runtime.getManifest().version;
   document.getElementById('appVer').textContent = ver;
   const vf = document.getElementById('appVerFoot'); if (vf) vf.textContent = ver;
 
