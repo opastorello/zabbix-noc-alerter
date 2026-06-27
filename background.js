@@ -308,12 +308,19 @@ async function _pollZabbixOnce() {
   active.forEach(p => { bySev[Number(p.severity)] = (bySev[Number(p.severity)] || 0) + 1; });
   const maxSev = active.reduce((m, p) => Math.max(m, Number(p.severity)), 0);
 
-  // limpa snoozes expirados ou de problemas que ja sairam da lista (resolvidos/filtrados)
+  // limpa snoozes expirados ou de problemas que sairam da lista; coleta os que expiraram
+  // com o problema AINDA ativo -> re-alertar ("o snooze acabou e o problema continua").
   const _snzNow = Date.now();
   const _activeIds = new Set(active.map(p => p.eventid));
   let _snzChanged = false;
+  const justWoke = [];
   for (const id of Object.keys(state.snoozes)) {
-    if (state.snoozes[id] <= _snzNow || !_activeIds.has(id)) { delete state.snoozes[id]; _snzChanged = true; }
+    if (state.snoozes[id] <= _snzNow) {
+      if (_activeIds.has(id)) justWoke.push(id); // expirou e o problema ainda existe
+      delete state.snoozes[id]; _snzChanged = true;
+    } else if (!_activeIds.has(id)) {
+      delete state.snoozes[id]; _snzChanged = true; // problema resolvido durante o snooze
+    }
   }
   if (_snzChanged) saveSnoozes();
 
@@ -349,6 +356,18 @@ async function _pollZabbixOnce() {
       if (config.notificationsEnabled) {
         freshAlert.sort((a, b) => Number(b.severity) - Number(a.severity));
         freshAlert.slice(0, MAX_NOTIFS_PER_POLL).forEach(p => notify(p, base));
+      }
+    }
+    // SNOOZE ACABOU: re-alerta na hora (som + notificacao), mesmo com re-alarme off e sem ser "novo".
+    if (justWoke.length) {
+      const woke = active.filter(p => justWoke.includes(p.eventid) && p.acknowledged !== '1' && !inMaintenance(p));
+      if (woke.length) {
+        const wokeMax = woke.reduce((m, p) => Math.max(m, Number(p.severity)), 0);
+        if (config.soundEnabled) { playSound(soundForSeverity(wokeMax), config.volume); state.lastAlarmTs = now; }
+        if (config.notificationsEnabled) {
+          woke.sort((a, b) => Number(b.severity) - Number(a.severity));
+          woke.slice(0, MAX_NOTIFS_PER_POLL).forEach(p => notify(p, base));
+        }
       }
     }
     // NAG: re-alarma enquanto houver problema NAO-ackado (som + notificacao, ate dar ack ou mute)
