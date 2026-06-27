@@ -1,0 +1,40 @@
+<!DOCTYPE html><html lang="es"><head><meta charset="UTF-8">
+<style>
+  html,body{margin:0;padding:0;} *{box-sizing:border-box;}
+  body{width:1280px;height:800px;overflow:hidden;font-family:'Segoe UI',-apple-system,sans-serif;
+       background:radial-gradient(1100px 620px at 80% 20%, #2a1117 0%, #14171e 40%, #0b0d12 100%);}
+  .slide{width:1280px;height:800px;display:flex;align-items:center;padding:0 86px;gap:56px;}
+  .col-text{flex:1;}
+  .eyebrow{font-size:14px;font-weight:700;letter-spacing:2.5px;text-transform:uppercase;color:#ef6b6b;margin-bottom:22px;}
+  .col-text h1{font-size:54px;line-height:1.07;font-weight:800;margin:0 0 24px;color:#fff;letter-spacing:-1.5px;}
+  .col-text p{font-size:21px;line-height:1.5;color:#aab2c0;margin:0;max-width:540px;}
+  .col-art{width:480px;display:flex;flex-direction:column;gap:18px;align-items:center;}
+  .toast{width:460px;background:#1d1e23;border:1px solid #34343c;border-radius:14px;box-shadow:0 30px 70px rgba(0,0,0,.55);padding:18px;display:flex;gap:15px;}
+  .toast .ic{width:50px;height:50px;border-radius:9px;flex-shrink:0;}
+  .toast .tt{flex:1;min-width:0;}
+  .toast .title{font-size:17px;font-weight:700;color:#fff;margin-bottom:5px;}
+  .toast .title .tag{font-size:12px;font-weight:800;padding:2px 7px;border-radius:5px;margin-right:7px;vertical-align:middle;}
+  .tag.dis{background:#3a1414;color:#ff6b6b;} .tag.high{background:#3a1f14;color:#ff9166;}
+  .toast .body{font-size:15px;color:#c8ccd4;margin-bottom:10px;}
+  .toast .app{font-size:12px;color:#7a8090;display:flex;align-items:center;gap:7px;}
+  .toast .app img{width:16px;height:16px;border-radius:3px;}
+</style></head>
+<body>
+<div class="slide">
+  <div class="col-text">
+    <div class="eyebrow">Zabbix NOC Alerter</div>
+    <h1>Notificaciones<br>que aparecen</h1>
+    <p>Una notificación del navegador para cada problema nuevo, con el nombre del host, incluso con la pestaña en segundo plano. Haz clic y abre el evento exacto en Zabbix.</p>
+  </div>
+  <div class="col-art">
+    <div class="toast"><img class="ic" src="../../icons/icon128.png" alt="">
+      <div class="tt"><div class="title"><span class="tag dis">DESASTRE</span>db-primary-01</div>
+      <div class="body">Sin respuesta al ping ICMP</div>
+      <div class="app"><img src="../../icons/icon16.png" alt="">Zabbix NOC Alerter - clic para abrir</div></div></div>
+    <div class="toast"><img class="ic" src="../../icons/icon128.png" alt="">
+      <div class="tt"><div class="title"><span class="tag high">ALTA</span>web-prod-02</div>
+      <div class="body">Uso de CPU alto (más de 90% por 5m)</div>
+      <div class="app"><img src="../../icons/icon16.png" alt="">Zabbix NOC Alerter - clic para abrir</div></div></div>
+  </div>
+</div>
+</body></html>

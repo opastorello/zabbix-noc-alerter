@@ -4,3 +4,7 @@
 .gitattributes export-ignore
 assets export-ignore
 assets/** export-ignore
+screenshots export-ignore
+screenshots/** export-ignore
+.claude export-ignore
+.claude/** export-ignore
