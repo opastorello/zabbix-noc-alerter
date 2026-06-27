@@ -4,6 +4,7 @@ const SEV = { 5: ['DIS', 'dis'], 4: ['HIGH', 'high'], 3: ['AVG', 'avg'], 2: ['WA
 const MIN_MS = 60000, HOUR_MS = 3600000, DAY_MS = 86400000; // janelas do "ha quanto tempo"
 let cfg = {};
 let lang = 'pt';
+let allProblems = []; // lista completa do ultimo status (base pro filtro client-side)
 
 document.addEventListener('DOMContentLoaded', () => {
   lang = resolveLang(); applyI18n(lang); // idioma na hora: global + estaticos juntos (sem mistura PT/EN)
@@ -18,6 +19,9 @@ document.addEventListener('DOMContentLoaded', () => {
     chrome.runtime.sendMessage({ action: 'testAlert', preset: cfg.soundSev4 || 'siren', volume: cfg.volume ?? 0.8 });
   });
   document.getElementById('muteBtn').addEventListener('click', toggleMute);
+  const fb = document.getElementById('filterBox');
+  fb.addEventListener('input', applyFilter);
+  fb.addEventListener('keydown', (e) => { if (e.key === 'Escape') { fb.value = ''; applyFilter(); } });
   load();
 });
 
@@ -50,23 +54,35 @@ function setStatusText(txt) { document.getElementById('statusBar').textContent =
 function render(st) {
   const bar = document.getElementById('statusBar');
   bar.className = 'status-bar';
+  const fb = document.getElementById('filterBox');
   if (!st || st.state === 'unconfigured') {
     bar.classList.add('warn'); bar.textContent = t('cfg_url', lang);
-    setCounts({}); renderEmptyState(); return;
+    setCounts({}); fb.style.display = 'none'; renderEmptyState(); return;
   }
   if (st.state === 'no-session') {
     bar.classList.add('warn'); bar.textContent = t('no_session', lang);
-    setCounts({}); renderEmptyState(); return;
+    setCounts({}); fb.style.display = 'none'; renderEmptyState(); return;
   }
   if (st.state === 'error') {
     bar.classList.add('err'); bar.textContent = t('err', lang) + ': ' + (st.error || '?');
-    setCounts({}); renderList([]); return;
+    setCounts({}); fb.style.display = 'none'; allProblems = []; renderList([]); return;
   }
   // ok
   bar.classList.add('ok');
   bar.textContent = `${st.total} ${t('active', lang)} (${st.via === 'token' ? t('via_token', lang) : t('via_session', lang)}) - ${ago(st.ts)}`;
   setCounts(st.bySev || {});
-  renderList(st.problems || []);
+  allProblems = st.problems || [];
+  fb.style.display = allProblems.length ? '' : 'none'; // so mostra o filtro quando ha o que filtrar
+  applyFilter();
+}
+
+// filtro client-side por host OU nome do problema (instantaneo, sem novo poll)
+function applyFilter() {
+  const term = (document.getElementById('filterBox').value || '').trim().toLowerCase();
+  const filtered = term
+    ? allProblems.filter(p => ((p.host || '') + ' ' + (p.name || '')).toLowerCase().includes(term))
+    : allProblems;
+  renderList(filtered, term);
 }
 
 // Estado vazio acionavel (sem URL / sem sessao): botao primario que abre as Opcoes.
@@ -85,9 +101,12 @@ function setCounts(bySev) {
   document.getElementById('cInfo').textContent = (bySev[1] || 0) + (bySev[0] || 0);
 }
 
-function renderList(problems) {
+function renderList(problems, term) {
   const el = document.getElementById('list');
-  if (!problems.length) { el.innerHTML = '<div class="empty">' + esc(t('none', lang)) + ' 🟢</div>'; return; }
+  if (!problems.length) {
+    el.innerHTML = '<div class="empty">' + (term ? esc(t('no_match', lang)) : esc(t('none', lang)) + ' 🟢') + '</div>';
+    return;
+  }
   el.innerHTML = problems.map(p => {
     const [lbl, cls] = SEV[p.severity] || ['?', 'info'];
     const tags = (p.acknowledged ? '<span class="tag ackd">&#x2713; ACK</span>' : '')
