@@ -23,6 +23,13 @@ The whole UI is translatable and the language list is self-extending:
 3. Reload the extension. The language selector and every screen pick it up
    automatically. No other file needs to change.
 
+## Screenshots
+
+If you change the popup or options UI, update the matching mockup in
+`screenshots/` and regenerate the images in `assets/` (open each mockup at a
+1280x800 viewport and capture it). See `screenshots/README.md` for details.
+The same images are reused in the READMEs and the Chrome Web Store listing.
+
 ## House rules (please keep these)
 
 These keep the project simple, private and portable:
