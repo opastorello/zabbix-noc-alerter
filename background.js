@@ -51,6 +51,7 @@ let state = {
   notifUrls: {},          // notifId -> url (fast-path em memoria; persistido em storage.session)
   lastAlarmTs: 0,         // ultimo toque de som (pro nag)
   lastSeenTs: 0,          // quando o popup foi aberto pela ultima vez (base do badge de 'nao vistos')
+  snoozes: {},            // eventid -> timestamp ate quando o problema fica em silencio (snooze individual)
   authMode: null,         // 'header' | 'body' = modo de auth descoberto (cache; evita 2x request no 6.x)
   status: { state: 'unconfigured' }
 };
@@ -59,11 +60,12 @@ let _pollInFlight = false, _pollAgain = false; // mutex + coalescing do poll
 // =====================================================
 // Init
 // =====================================================
-chrome.storage.local.get(['config', 'lastSeenTs'], async (r) => {
+chrome.storage.local.get(['config', 'lastSeenTs', 'snoozes'], async (r) => {
   if (r.config) config = { ...DEFAULT_CONFIG, ...r.config };
   // 1a vez: ancora "visto" no agora (nao marca os problemas ja existentes como novos)
   state.lastSeenTs = r.lastSeenTs || Date.now();
   if (!r.lastSeenTs) chrome.storage.local.set({ lastSeenTs: state.lastSeenTs });
+  state.snoozes = r.snoozes || {}; // snoozes individuais sobrevivem ao sleep do service worker
   scheduleAlarm();
   await startOffscreenTimer();
   pollZabbix();
@@ -197,6 +199,15 @@ function inMaintenance(p) {
     && p.suppression_data.some(s => s && s.maintenanceid && s.maintenanceid !== '0');
 }
 
+// snooze individual: silencia UM problema (por eventid) ate um horario, sem mute global.
+// (quando a multi-instancia entrar, a chave deve virar instId:eventid)
+function isSnoozed(p) {
+  return Number(state.snoozes[p.eventid] || 0) > Date.now();
+}
+function saveSnoozes() {
+  chrome.storage.local.set({ snoozes: state.snoozes });
+}
+
 async function _pollZabbixOnce() {
   const base = normalizeUrl(config.zabbixUrl);
   if (!base) { setStatus({ state: 'unconfigured' }); setBadge('', ''); return; }
@@ -297,6 +308,15 @@ async function _pollZabbixOnce() {
   active.forEach(p => { bySev[Number(p.severity)] = (bySev[Number(p.severity)] || 0) + 1; });
   const maxSev = active.reduce((m, p) => Math.max(m, Number(p.severity)), 0);
 
+  // limpa snoozes expirados ou de problemas que ja sairam da lista (resolvidos/filtrados)
+  const _snzNow = Date.now();
+  const _activeIds = new Set(active.map(p => p.eventid));
+  let _snzChanged = false;
+  for (const id of Object.keys(state.snoozes)) {
+    if (state.snoozes[id] <= _snzNow || !_activeIds.has(id)) { delete state.snoozes[id]; _snzChanged = true; }
+  }
+  if (_snzChanged) saveSnoozes();
+
   setStatus({
     state: 'ok', via,
     total: active.length,
@@ -305,7 +325,7 @@ async function _pollZabbixOnce() {
     problems: active.slice(0, MAX_PROBLEMS_UI).map(p => ({
       eventid: p.eventid, objectid: p.objectid, hostid: p.hostid || '', name: p.name, host: p.host || '', severity: Number(p.severity),
       clock: Number(p.clock), acknowledged: p.acknowledged === '1', suppressed: p.suppressed === '1',
-      maintenance: inMaintenance(p), ackmsg: p.ackmsg || ''
+      maintenance: inMaintenance(p), snoozedUntil: Number(state.snoozes[p.eventid] || 0), ackmsg: p.ackmsg || ''
     }))
   });
 
@@ -322,7 +342,7 @@ async function _pollZabbixOnce() {
   const now = Date.now();
   if (!config.muted) {
     // NOVOS: som + notificacao imediatos. Manutencao NAO alarma (so aparece na lista, com a tag MNT).
-    const freshAlert = fresh.filter(p => !inMaintenance(p));
+    const freshAlert = fresh.filter(p => !inMaintenance(p) && !isSnoozed(p));
     if (freshAlert.length) {
       const freshMax = freshAlert.reduce((m, p) => Math.max(m, Number(p.severity)), 0);
       if (config.soundEnabled) { playSound(soundForSeverity(freshMax), config.volume); state.lastAlarmTs = now; }
@@ -333,7 +353,7 @@ async function _pollZabbixOnce() {
     }
     // NAG: re-alarma enquanto houver problema NAO-ackado (som + notificacao, ate dar ack ou mute)
     if (config.repeatAlarm && (config.soundEnabled || (config.notificationsEnabled && config.nagNotify))) {
-      const nagPool = active.filter(p => p.acknowledged !== '1' && !inMaintenance(p)); // manutencao nao re-alarma
+      const nagPool = active.filter(p => p.acknowledged !== '1' && !inMaintenance(p) && !isSnoozed(p)); // manutencao/snooze nao re-alarmam
       const gap = Math.max(MIN_POLL_SEC, Number(config.repeatInterval) || 60) * 1000;
       if (nagPool.length && (now - (state.lastAlarmTs || 0)) >= gap) {
         const nagMax = nagPool.reduce((m, p) => Math.max(m, Number(p.severity)), 0);
@@ -501,6 +521,16 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.action === 'tick') { // heartbeat vindo do offscreen
     pollZabbix();
     return;
+  }
+
+  if (msg.action === 'snoozeEvent') {
+    // ms > 0: silenciar este eventid por X ms; ms <= 0: acordar (remover o snooze)
+    const id = String(msg.eventid);
+    const ms = Number(msg.ms) || 0;
+    if (ms > 0) state.snoozes[id] = Date.now() + ms; else delete state.snoozes[id];
+    saveSnoozes();
+    pollZabbix().then(() => sendResponse({ ok: true }));
+    return true;
   }
 
   if (msg.action === 'setConfig') {
