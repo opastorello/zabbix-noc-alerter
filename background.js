@@ -377,7 +377,7 @@ function notify(p, base) {
     iconUrl: 'icons/icon128.png',
     title: '[' + t('nsev' + sev, resolveLang(config.lang)).toUpperCase() + '] ' + (p.host || 'Zabbix'),
     message: p.name || '(...)',
-    contextMessage: 'Zabbix NOC - ' + t('n_click', resolveLang(config.lang)),
+    contextMessage: 'Zabbix NOC Alerter - ' + t('n_click', resolveLang(config.lang)),
     priority: 2,
     requireInteraction: sev >= 4
   });
@@ -391,7 +391,7 @@ function notifyResolved(p, base) {
     iconUrl: 'icons/icon128.png',
     title: '✓ ' + t('n_resolved', resolveLang(config.lang)) + ' - ' + (p.host || 'Zabbix'),
     message: p.name || '(...)',
-    contextMessage: 'Zabbix NOC - ' + t('n_recovered', resolveLang(config.lang)),
+    contextMessage: 'Zabbix NOC Alerter - ' + t('n_recovered', resolveLang(config.lang)),
     priority: 1,
     requireInteraction: false
   });
