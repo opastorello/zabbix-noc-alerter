@@ -114,8 +114,8 @@ function renderList(problems, term) {
       + (p.maintenance ? `<span class="tag mnt" title="${t('tag_maint', lang)}">MNT</span>`
         : (p.suppressed ? '<span class="tag">SUP</span>' : ''));
     const snzBtn = snoozed
-      ? `<button class="snzbtn snoozed" data-ev="${p.eventid}" title="${t('snz_wake', lang)}">&#x1f4a4; ${snzRemain(p.snoozedUntil)}</button>`
-      : (p.acknowledged ? '' : `<button class="snzbtn" data-ev="${p.eventid}" title="${t('snz_do', lang)}">&#x1f4a4;</button>`);
+      ? `<button class="snzbtn snoozed" data-ev="${p.eventid}" title="${t('snz_wake', lang)}">SNZ ${snzRemain(p.snoozedUntil)}</button>`
+      : (p.acknowledged ? '' : `<button class="snzbtn" data-ev="${p.eventid}" title="${t('snz_do', lang)}">SNZ</button>`);
     const ackBtn = p.acknowledged ? '' : `<button class="ackbtn" data-ev="${p.eventid}" title="${t('ack_do', lang)}">ACK</button>`;
     return `<div class="row ${cls}${p.acknowledged ? ' is-ack' : ''}${snoozed ? ' is-snoozed' : ''}" role="button" tabindex="0" data-ev="${p.eventid}" data-tid="${p.objectid || ''}" data-hostid="${p.hostid || ''}" title="${t('open_problem', lang)}">
       <span class="badge ${cls}">${lbl}</span>
@@ -168,14 +168,14 @@ function renderList(problems, term) {
       const row = btn.closest('.row');
       row.classList.add('editing');
       row.innerHTML = `<span class="snzlabel">${esc(t('snz_do', lang))}</span>
-        <button class="snzopt" data-ms="900000">15m</button>
-        <button class="snzopt" data-ms="3600000">1h</button>
-        <button class="snzopt" data-ms="14400000">4h</button>
-        <button class="ackcancel" title="${t('cancel', lang)}">&#x2715;</button>`;
+        <button class="snzopt" data-ms="900000">15 min</button>
+        <button class="snzopt" data-ms="3600000">1 h</button>
+        <button class="snzopt" data-ms="14400000">4 h</button>
+        <button class="snzx" title="${t('cancel', lang)}">&#x2715;</button>`;
       row.querySelectorAll('.snzopt').forEach(opt => opt.addEventListener('click', () => {
         chrome.runtime.sendMessage({ action: 'snoozeEvent', eventid: ev, ms: Number(opt.dataset.ms) }, () => setTimeout(load, 300));
       }));
-      row.querySelector('.ackcancel').addEventListener('click', load);
+      row.querySelector('.snzx').addEventListener('click', load);
     });
   });
 
