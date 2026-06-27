@@ -133,6 +133,7 @@ function renderList(problems, term) {
       e.stopPropagation();
       const row = btn.closest('.row');
       const ev = btn.dataset.ev;
+      row.style.minHeight = row.offsetHeight + 'px'; // trava a altura: o editor nao encolhe a linha
       row.classList.add('editing');
       row.innerHTML = `<input class="ackmsg" type="text" maxlength="255" placeholder="${t('ack_ph', lang)}">
         <button class="ackok" title="${t('confirm', lang)}">&#x2713;</button>
@@ -166,6 +167,7 @@ function renderList(problems, term) {
         return;
       }
       const row = btn.closest('.row');
+      row.style.minHeight = row.offsetHeight + 'px'; // trava a altura: o picker nao encolhe a linha
       row.classList.add('editing');
       row.innerHTML = `<span class="snzlabel">${esc(t('snz_do', lang))}</span>
         <button class="snzopt" data-ms="900000">15 min</button>
