@@ -60,6 +60,8 @@ and polls the Zabbix API for active problems. A new one plays a sound and raises
 notification. No token is required; if your Zabbix does not accept the frontend
 session for API writes (acknowledge), set an API token in the options as a fallback.
 
+**Compatibility:** tested on Zabbix 6.0 to 7.4 (frontend session and all API calls work). Zabbix 8.0 will be validated once it reaches a stable release.
+
 ## Privacy
 
 Talks only to **your Zabbix** (the URL you set) and reads its session cookie locally.
