@@ -423,12 +423,16 @@ async function ensureOffscreen() {
   // SEMPRE re-arma o heartbeat: o documento pode ter sido destruido pelo Chrome (idle/crash)
   // ou recriado sem timer -> sem isto o poll <30s some e sobra so o alarm de 1min.
   const ms = Math.max(MIN_POLL_SEC, Number(config.pollInterval) || 15) * 1000;
-  try { chrome.runtime.sendMessage({ target: 'offscreen', type: 'setInterval', ms }); } catch (e) {}
+  // .catch: o offscreen pode nao estar ouvindo (Chrome destroi por idle/corrida). sendMessage e
+  // assincrono, entao um try/catch sincrono nao pega a rejeicao - tem que tratar a promise.
+  chrome.runtime.sendMessage({ target: 'offscreen', type: 'setInterval', ms }).catch(() => {});
 }
 
 async function playSound(preset, volume) {
   await ensureOffscreen();
-  chrome.runtime.sendMessage({ target: 'offscreen', type: 'play', preset: preset || 'beep', volume: Number(volume) || 0.8 });
+  // .catch: mesma rejeicao benigna do setInterval acima ("Receiving end does not exist") se o
+  // offscreen morreu entre o ensureOffscreen e o envio - so engole pra nao virar erro nao tratado.
+  chrome.runtime.sendMessage({ target: 'offscreen', type: 'play', preset: preset || 'beep', volume: Number(volume) || 0.8 }).catch(() => {});
 }
 
 // =====================================================
