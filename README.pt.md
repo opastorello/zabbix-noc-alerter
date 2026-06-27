@@ -12,6 +12,7 @@
 </p>
 
 <p align="center">
+  <a href="https://chromewebstore.google.com/detail/zabbix-noc-alerter/nlbihmhpbdfhnglclecbaebnfpjbngep"><img alt="Chrome Web Store" src="https://img.shields.io/chrome-web-store/v/nlbihmhpbdfhnglclecbaebnfpjbngep?label=Chrome%20Web%20Store&color=e45959&logo=googlechrome&logoColor=white"></a>
   <a href="https://github.com/opastorello/zabbix-noc-alerter/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/opastorello/zabbix-noc-alerter/actions/workflows/ci.yml/badge.svg"></a>
   <img alt="chrome" src="https://img.shields.io/badge/Chrome-MV3-e45959">
   <img alt="zabbix" src="https://img.shields.io/badge/Zabbix-6.x%20%7C%207.x-red">
@@ -40,6 +41,12 @@ notificação, direto no navegador, enquanto você trabalha em qualquer outra co
 - 🔒 **Nada hardcoded:** a URL do Zabbix (e um token opcional) ficam só nas opções.
 
 ## Instalação
+
+### Pela Chrome Web Store (recomendado)
+
+[**Instalar o Zabbix NOC Alerter**](https://chromewebstore.google.com/detail/zabbix-noc-alerter/nlbihmhpbdfhnglclecbaebnfpjbngep) - um clique, com atualizações automáticas. Depois abra as **opções** da extensão, informe a URL do seu Zabbix e mantenha uma aba do Zabbix logada. É só isso.
+
+### A partir do código (unpacked)
 
 1. Baixe o [release](https://github.com/opastorello/zabbix-noc-alerter/releases/latest) mais recente e descompacte (ou clone este repositório).
 2. Abra `chrome://extensions`, ligue o **Developer mode**, clique em **Load unpacked** e selecione a pasta.
