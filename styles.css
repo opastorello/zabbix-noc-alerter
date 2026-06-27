@@ -49,10 +49,10 @@ header h1 { font-size:13px; font-weight:700; color:var(--accent); white-space:no
 .snzbtn:hover { background:#2c2f3a; color:#cfd6e0; }
 .snzbtn.snoozed { background:#2e2a16; color:#d9b85a; border-color:#4a3f1a; }
 .row.is-snoozed { opacity:0.55; }
-.snzlabel { font-size:11px; color:var(--text-dim); margin-right:4px; }
-.snzopt { font-size:11px; font-weight:600; background:#16233f; color:#9cc4ff; border:1px solid #25406e; padding:4px 12px; border-radius:6px; cursor:pointer; }
+.snzlabel { font-size:10px; color:var(--text-dim); margin-right:4px; }
+.snzopt { font-size:10px; font-weight:600; background:#16233f; color:#9cc4ff; border:1px solid #25406e; padding:3px 10px; border-radius:5px; cursor:pointer; }
 .snzopt:hover { background:#1d2f52; color:#cfe1ff; }
-.snzx { font-size:11px; font-weight:700; background:#23252e; color:var(--text-dim); border:1px solid #3a3f4a; padding:4px 10px; border-radius:6px; cursor:pointer; margin-left:auto; }
+.snzx { font-size:10px; font-weight:700; background:#23252e; color:var(--text-dim); border:1px solid #3a3f4a; padding:3px 8px; border-radius:5px; cursor:pointer; margin-left:auto; }
 .snzx:hover { background:#2c2f3a; color:#cfd6e0; }
 /* editor inline do ack */
 .row.editing { display:flex; gap:4px; align-items:center; }
