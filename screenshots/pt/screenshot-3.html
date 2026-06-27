@@ -1,0 +1,61 @@
+<!DOCTYPE html><html lang="pt-br"><head><meta charset="UTF-8">
+<style>
+  html,body{margin:0;padding:0;} *{box-sizing:border-box;}
+  body{width:1280px;height:800px;overflow:hidden;font-family:'Segoe UI',-apple-system,sans-serif;
+       background:radial-gradient(1100px 620px at 18% 22%, #15212e 0%, #14171e 42%, #0b0d12 100%);}
+  .slide{width:1280px;height:800px;display:flex;align-items:center;padding:0 86px;gap:60px;}
+  .col-art{width:440px;display:flex;justify-content:center;}
+  .col-text{flex:1;}
+  .eyebrow{font-size:14px;font-weight:700;letter-spacing:2.5px;text-transform:uppercase;color:#5a9bf0;margin-bottom:22px;}
+  .col-text h1{font-size:54px;line-height:1.07;font-weight:800;margin:0 0 24px;color:#fff;letter-spacing:-1.5px;}
+  .col-text p{font-size:21px;line-height:1.5;color:#aab2c0;margin:0 0 26px;max-width:520px;}
+  .feat{display:flex;align-items:center;gap:12px;font-size:18px;color:#cfd6e0;margin-bottom:14px;}
+  .feat .dot{width:9px;height:9px;border-radius:50%;background:#5a9bf0;flex-shrink:0;}
+  .card{width:430px;background:#171a21;border:1px solid #2a2f3a;border-radius:14px;overflow:hidden;box-shadow:0 30px 80px rgba(0,0,0,.6);}
+  .card h3{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.6px;color:#e6e6e6;padding:11px 16px;border-bottom:1px solid #2a2f3a;margin:0;background:#10131a;}
+  .b{padding:14px 16px;}
+  .f{margin-bottom:13px;} .f:last-child{margin-bottom:0;}
+  .f label{display:block;font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.4px;color:#9aa3b2;margin-bottom:5px;}
+  .inp{display:block;width:100%;background:#0f1115;border:1px solid #2a2f3a;border-radius:6px;color:#e6e6e6;font-size:13px;padding:9px 11px;}
+  .tr{display:flex;align-items:center;gap:10px;font-size:13px;color:#e6e6e6;padding:5px 0;}
+  .tg{width:36px;height:20px;border-radius:10px;position:relative;flex-shrink:0;}
+  .tg.on{background:#e45959;}
+  .tg::after{content:'';position:absolute;top:2px;width:16px;height:16px;border-radius:50%;background:#fff;left:18px;}
+  .row2{display:flex;gap:10px;} .row2 .f{flex:1;}
+  .sound{display:flex;gap:7px;align-items:center;} .sound .inp{flex:1;}
+  .mini{background:#1e3a5f;border:1px solid #25406e;color:#9cc4ff;border-radius:6px;font-size:12px;font-weight:600;padding:9px 13px;white-space:nowrap;}
+</style></head>
+<body>
+<div class="slide">
+  <div class="col-art">
+    <div class="card">
+      <h3>Conexão</h3>
+      <div class="b"><div class="f"><label>URL do Zabbix</label><span class="inp">https://zabbix.example.com</span></div></div>
+      <h3>Monitoramento</h3>
+      <div class="b"><div class="row2">
+        <div class="f"><label>Severidade mínima</label><span class="inp">Alta+</span></div>
+        <div class="f"><label>Idade máxima (dias)</label><span class="inp">14</span></div>
+      </div></div>
+      <h3>Alertas</h3>
+      <div class="b">
+        <div class="tr"><span class="tg on"></span>Tocar som em problema novo</div>
+        <div class="tr"><span class="tg on"></span>Re-alarmar enquanto não reconhecido</div>
+        <div class="tr"><span class="tg on"></span>Re-notificar no re-alarme</div>
+        <div class="tr"><span class="tg on"></span>Ignorar problemas em manutenção</div>
+        <div class="f" style="margin-top:8px;"><label>Som - Desastre</label>
+          <div class="sound"><span class="inp">klaxon</span><span class="mini">&#x25b6; Testar</span></div></div>
+      </div>
+    </div>
+  </div>
+  <div class="col-text">
+    <div class="eyebrow">Zabbix NOC Alerter</div>
+    <h1>Ajuste para<br>o seu NOC</h1>
+    <p>Deixe do jeito que a sua equipe trabalha, tudo pela tela de opções.</p>
+    <div class="feat"><span class="dot"></span>Um som diferente por severidade</div>
+    <div class="feat"><span class="dot"></span>Re-alarme com som e notificação</div>
+    <div class="feat"><span class="dot"></span>Filtro ao vivo no popup, por host ou nome</div>
+    <div class="feat"><span class="dot"></span>Ciente de manutenção: tag MNT, silencioso</div>
+    <div class="feat"><span class="dot"></span>Esconder suprimidos, reconhecidos, em manutenção</div>
+  </div>
+</div>
+</body></html>
