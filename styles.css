@@ -36,6 +36,7 @@ header h1 { font-size:13px; font-weight:700; color:var(--accent); white-space:no
 .row.warn { border-left-color:var(--warn); } .row.info { border-left-color:var(--info); }
 .row.is-ack { border-left-color:var(--green); background:#101f17; }
 .tag.ackd { background:#13351f; color:var(--green); font-weight:700; }
+.tag.mnt { background:#11273a; color:#5aa9e6; border-color:#1d3e5c; } /* manutencao = azul, distinto do SUP ambar */
 /* botao de ACAO (reconhecer) = AZUL; o estado (reconhecido) = .tag.ackd VERDE (como o Zabbix) */
 .ackbtn { font-size:8px; font-weight:700; background:#16233f; color:var(--info); border:1px solid #25406e; padding:1px 6px; border-radius:3px; cursor:pointer; flex-shrink:0; }
 .ackbtn:hover { background:#1d2f52; color:#9cc4ff; }

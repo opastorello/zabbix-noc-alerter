@@ -90,7 +90,9 @@ function renderList(problems) {
   if (!problems.length) { el.innerHTML = '<div class="empty">' + esc(t('none', lang)) + ' 🟢</div>'; return; }
   el.innerHTML = problems.map(p => {
     const [lbl, cls] = SEV[p.severity] || ['?', 'info'];
-    const tags = (p.acknowledged ? '<span class="tag ackd">&#x2713; ACK</span>' : '') + (p.suppressed ? '<span class="tag">SUP</span>' : '');
+    const tags = (p.acknowledged ? '<span class="tag ackd">&#x2713; ACK</span>' : '')
+      + (p.maintenance ? `<span class="tag mnt" title="${t('tag_maint', lang)}">MNT</span>`
+        : (p.suppressed ? '<span class="tag">SUP</span>' : ''));
     const ackBtn = p.acknowledged ? '' : `<button class="ackbtn" data-ev="${p.eventid}" title="${t('ack_do', lang)}">ACK</button>`;
     return `<div class="row ${cls}${p.acknowledged ? ' is-ack' : ''}" role="button" tabindex="0" data-ev="${p.eventid}" data-tid="${p.objectid || ''}" data-hostid="${p.hostid || ''}" title="${t('open_problem', lang)}">
       <span class="badge ${cls}">${lbl}</span>

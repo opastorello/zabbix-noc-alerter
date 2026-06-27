@@ -11,7 +11,7 @@ const SOUNDS = [
 const TEXT = ['zabbixUrl', 'apiToken', 'excludePatterns'];
 const NUM = ['pollInterval', 'repeatInterval'];
 const SEL = ['minSeverity', 'soundSev5', 'soundSev4', 'soundSev3', 'soundSev2', 'soundSev1'];
-const CHK = ['soundEnabled', 'notificationsEnabled', 'notifyResolved', 'repeatAlarm', 'ignoreAckd', 'ignoreSuppressed'];
+const CHK = ['soundEnabled', 'notificationsEnabled', 'notifyResolved', 'repeatAlarm', 'ignoreAckd', 'ignoreSuppressed', 'ignoreMaintenance'];
 
 document.addEventListener('DOMContentLoaded', () => {
   populateLangSelect(document.getElementById('lang')); // idiomas gerados do i18n.js (auto-extensivel)
@@ -99,7 +99,7 @@ function resetSettings() {
     zabbixUrl: '', apiToken: '', excludePatterns: '', maxAgeDays: 0, pollInterval: 15, repeatAlarm: true, repeatInterval: 60,
     minSeverity: 4, soundEnabled: true, notificationsEnabled: true, notifyResolved: true, volume: 0.8,
     soundSev5: 'klaxon', soundSev4: 'siren', soundSev3: 'pulse', soundSev2: 'beepbeep', soundSev1: 'chime',
-    ignoreAckd: false, ignoreSuppressed: true, muted: false, lang
+    ignoreAckd: false, ignoreSuppressed: true, ignoreMaintenance: true, muted: false, lang
   };
   // limpa/ajusta os campos JA (nao depende do callback do background)
   TEXT.forEach(id => { document.getElementById(id).value = defaults[id] || ''; });
