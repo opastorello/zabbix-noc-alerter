@@ -1,4 +1,4 @@
-// Zabbix NOC Alerter - Offscreen audio v0.2.0
+// Zabbix NOC Alerter - Offscreen audio
 // Sons SINTETIZADOS via Web Audio, com cara de ALARME:
 // osciladores detunados em camada + soft-clip (aspereza) + padroes repetidos (~2s).
 
