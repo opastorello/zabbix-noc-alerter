@@ -160,6 +160,18 @@
     </div>
   </div>
 
+  <div class="section">
+    <h2 data-i18n="backup">Backup</h2>
+    <div class="section-body">
+      <div class="desc" data-i18n="backup_desc">Exporte/importe as configurações em JSON (o token de API não é exportado).</div>
+      <div class="field" style="display:flex; gap:8px; margin-top:8px;">
+        <button id="exportBtn" class="btn-test" data-i18n="export_btn">Exportar</button>
+        <button id="importBtn" class="btn-test" data-i18n="import_btn">Importar</button>
+        <input type="file" id="importFile" accept="application/json,.json" style="display:none;">
+      </div>
+    </div>
+  </div>
+
   <div class="btn-row">
     <button id="saveBtn" class="btn-save" data-i18n="save">Salvar</button>
     <button id="resetBtn" class="btn-reset" data-i18n="reset">Restaurar padrões</button>

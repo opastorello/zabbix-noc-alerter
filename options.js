@@ -31,6 +31,9 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('saveBtn').addEventListener('click', saveSettings);
   document.getElementById('resetBtn').addEventListener('click', resetSettings);
   document.getElementById('testBtn').addEventListener('click', testConnection);
+  document.getElementById('exportBtn').addEventListener('click', exportSettings);
+  document.getElementById('importBtn').addEventListener('click', () => document.getElementById('importFile').click());
+  document.getElementById('importFile').addEventListener('change', (e) => { if (e.target.files[0]) importSettings(e.target.files[0]); e.target.value = ''; });
   document.getElementById('lang').addEventListener('change', (e) => {
     applyI18n(e.target.value);
     chrome.runtime.sendMessage({ action: 'setConfig', config: { lang: e.target.value } }); // salva -> vale no popup tambem
@@ -133,6 +136,39 @@ function testConnection() {
       res.style.color = '#ff8a8a';
     }
   });
+}
+
+function exportSettings() {
+  chrome.runtime.sendMessage({ action: 'getConfig' }, (r) => {
+    const cfg = { ...(r?.config || {}) };
+    delete cfg.apiToken; // nao exporta o segredo
+    delete cfg.muted;    // estado transitorio
+    const blob = new Blob([JSON.stringify(cfg, null, 2)], { type: 'application/json' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'zabbix-noc-alerter-settings.json';
+    a.click();
+    URL.revokeObjectURL(a.href);
+  });
+}
+
+function importSettings(file) {
+  const lang = document.getElementById('lang').value;
+  const reader = new FileReader();
+  reader.onload = () => {
+    try {
+      const data = JSON.parse(reader.result);
+      if (!data || typeof data !== 'object' || Array.isArray(data)) throw new Error('invalid');
+      delete data.apiToken; // import nunca sobrescreve o token do usuario
+      chrome.runtime.sendMessage({ action: 'setConfig', config: data }, () => {
+        loadSettings();
+        showAlert(t('import_ok', lang), 'success');
+      });
+    } catch (e) {
+      showAlert(t('import_err', lang), 'error');
+    }
+  };
+  reader.readAsText(file);
 }
 
 function showAlert(msg, type) {
