@@ -5,6 +5,13 @@ All notable changes to this project are documented here. The format is based on
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html). The version is the one
 in `manifest.json`.
 
+## [Unreleased]
+
+### Added
+- Snooze a single problem (15 min to 4 h) without the global mute; it re-alerts when the snooze ends.
+- Filter the popup list by clicking a severity stat (DIS/HIGH/AVG/WARN/INFO); composes with the text filter.
+- Option to toggle the re-alarm notification ("re-notify on re-alarm").
+
 ## [0.2.0]
 
 ### Added
