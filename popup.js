@@ -169,9 +169,10 @@ function renderList(problems, term) {
       const row = btn.closest('.row');
       row.style.minHeight = row.offsetHeight + 'px'; // trava a altura: o picker nao encolhe a linha
       row.classList.add('editing');
-      row.innerHTML = `<span class="snzlabel">${esc(t('snz_do', lang))}</span>
-        <button class="snzopt" data-ms="900000">15 min</button>
+      row.innerHTML = `<button class="snzopt" data-ms="900000">15 min</button>
+        <button class="snzopt" data-ms="1800000">30 min</button>
         <button class="snzopt" data-ms="3600000">1 h</button>
+        <button class="snzopt" data-ms="7200000">2 h</button>
         <button class="snzopt" data-ms="14400000">4 h</button>
         <button class="snzx" title="${t('cancel', lang)}">&#x2715;</button>`;
       row.querySelectorAll('.snzopt').forEach(opt => opt.addEventListener('click', () => {
