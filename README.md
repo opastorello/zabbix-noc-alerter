@@ -33,7 +33,8 @@ right in your browser, while you work on anything else.
 - 🔊 **Per-severity sound** with volume and a test button.
 - 🔁 **Re-alarm** (sound and notification) while a problem is unacknowledged, until you ack it or mute.
 - 🛠️ **Maintenance-aware:** problems in a maintenance window get an MNT tag and stay silent (or hide them).
-- 🔍 **Live filter** in the popup by host or problem name.
+- 🔍 **Live filter** in the popup by host or problem name, or by clicking a severity.
+- 💤 **Snooze a single problem** (15 min to 4 h) without the global mute; it re-alerts when the snooze ends.
 - 🖥️ **Shows the host** in the list and in the notification.
 - ✅ **Acknowledge from the popup** (with a message), and see any existing ack.
 - 🟢 **Resolved notification** when a problem recovers.
