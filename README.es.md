@@ -33,7 +33,8 @@ notificación, en tu navegador, mientras trabajas en cualquier otra cosa.
 - 🔊 **Sonido por severidad** con volumen y botón de prueba.
 - 🔁 **Re-alarma** (sonido y notificación) mientras haya un problema no reconocido, hasta dar ack o silencio.
 - 🛠️ **Consciente de mantenimiento:** los problemas en ventana de mantenimiento reciben la etiqueta MNT y quedan en silencio (o los ocultas).
-- 🔍 **Filtro en vivo** en el popup por host o nombre del problema.
+- 🔍 **Filtro en vivo** en el popup por host o nombre del problema, o haciendo clic en una severidad.
+- 💤 **Posponer (snooze) un solo problema** (15 min a 4 h) sin el silencio global; al terminar, vuelve a avisar.
 - 🖥️ **Muestra el host** en la lista y en la notificación.
 - ✅ **Ack desde el popup** (con mensaje) y muestra el ack existente.
 - 🟢 **Notificación de resuelto** cuando un problema se recupera.

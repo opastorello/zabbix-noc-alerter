@@ -33,7 +33,8 @@ notificação, direto no navegador, enquanto você trabalha em qualquer outra co
 - 🔊 **Som por severidade** com volume e botão de teste.
 - 🔁 **Re-alarme** (som e notificação) enquanto houver problema não reconhecido, até dar ack ou mudo.
 - 🛠️ **Ciente de manutenção:** problemas em janela de manutenção ganham a tag MNT e ficam silenciosos (ou você esconde).
-- 🔍 **Filtro ao vivo** no popup por host ou nome do problema.
+- 🔍 **Filtro ao vivo** no popup por host ou nome do problema, ou clicando numa severidade.
+- 💤 **Adiar (snooze) um problema só** (15 min a 4 h) sem o mudo global; ao acabar, ele re-alerta.
 - 🖥️ **Mostra o host** na lista e na notificação.
 - ✅ **Ack direto do popup** (com mensagem) e mostra o ack existente.
 - 🟢 **Notificação de resolvido** quando um problema recupera.
