@@ -10,6 +10,8 @@ in `manifest.json`.
 ### Added
 - Snooze a single problem (15 min to 4 h) without the global mute; it re-alerts when the snooze ends.
 - Filter the popup list by clicking a severity stat (DIS/HIGH/AVG/WARN/INFO); composes with the text filter.
+- Sort the popup list by severity (default), age (oldest first) or host.
+- Export and import settings as a JSON file (the API token is never exported, and never overwritten on import).
 - Option to toggle the re-alarm notification ("re-notify on re-alarm").
 
 ## [0.2.0]
