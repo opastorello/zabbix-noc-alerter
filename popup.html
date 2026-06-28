@@ -30,7 +30,14 @@
       <div class="stat info" data-sev="info" data-i18n-title="filter_sev" title="Filtrar por severidade"><span id="cInfo">0</span>INFO</div>
     </div>
 
-    <input type="text" id="filterBox" class="filter-box" data-i18n-ph="filter_ph" data-i18n-aria="filter_ph" placeholder="Filtrar host ou problema" autocomplete="off" style="display:none;">
+    <div class="filter-row" id="filterRow" style="display:none;">
+      <input type="text" id="filterBox" class="filter-box" data-i18n-ph="filter_ph" data-i18n-aria="filter_ph" placeholder="Filtrar host ou problema" autocomplete="off">
+      <select id="sortBy" class="sort-sel" data-i18n-title="sort_by" title="Ordenar">
+        <option value="sev" data-i18n="sort_sev">Severidade</option>
+        <option value="age" data-i18n="sort_age">Idade</option>
+        <option value="host" data-i18n="sort_host">Host</option>
+      </select>
+    </div>
 
     <div id="list" class="list">
       <div class="empty" data-i18n="nodata">Sem dados ainda.</div>
