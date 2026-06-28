@@ -24,7 +24,9 @@ header h1 { font-size:13px; font-weight:700; color:var(--accent); white-space:no
 .status-bar.err { border-color:#4a1f1f; color:#ff8a8a; }
 
 .stats-row { display:flex; gap:4px; margin-bottom:8px; }
-.stat { flex:1; text-align:center; padding:4px 2px; border-radius:4px; font-size:9px; font-weight:700; background:var(--bg-card); border:1px solid var(--border); color:var(--text-dim); }
+.stat { flex:1; text-align:center; padding:4px 2px; border-radius:4px; font-size:9px; font-weight:700; background:var(--bg-card); border:1px solid var(--border); color:var(--text-dim); cursor:pointer; transition:border-color .12s, background .12s; }
+.stat:hover { border-color:var(--text-dim); }
+.stat.active { border-color:#e6e6e6; background:var(--bg-hover); } /* filtro de severidade ativo */
 .stat span { display:block; font-size:15px; margin-bottom:1px; }
 .stat.dis span { color:var(--dis); } .stat.high span { color:var(--high); } .stat.avg span { color:var(--avg); }
 .stat.warn span { color:var(--warn); } .stat.info span { color:var(--info); }
