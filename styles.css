@@ -31,9 +31,12 @@ header h1 { font-size:13px; font-weight:700; color:var(--accent); white-space:no
 .stat.dis span { color:var(--dis); } .stat.high span { color:var(--high); } .stat.avg span { color:var(--avg); }
 .stat.warn span { color:var(--warn); } .stat.info span { color:var(--info); }
 
-.filter-box { width:100%; padding:5px 8px; margin-bottom:8px; background:var(--bg-card); border:1px solid var(--border); border-radius:4px; color:var(--text); font-size:11px; font-family:inherit; }
+.filter-row { display:flex; gap:6px; margin-bottom:8px; }
+.filter-box { flex:1; min-width:0; padding:5px 8px; background:var(--bg-card); border:1px solid var(--border); border-radius:4px; color:var(--text); font-size:11px; font-family:inherit; }
 .filter-box:focus { outline:none; border-color:var(--accent); }
 .filter-box::placeholder { color:var(--text-dim); }
+.sort-sel { flex-shrink:0; padding:5px 6px; background:var(--bg-card); border:1px solid var(--border); border-radius:4px; color:var(--text-dim); font-size:11px; font-family:inherit; cursor:pointer; }
+.sort-sel:focus { outline:none; border-color:var(--accent); }
 .list { max-height:340px; overflow-y:auto; }
 .empty { text-align:center; padding:18px 10px; color:var(--text-dim); font-size:11px; }
 .row { display:flex; align-items:center; gap:6px; padding:6px 6px; border-radius:4px; border-left:3px solid var(--border); background:var(--bg-card); margin-bottom:3px; }

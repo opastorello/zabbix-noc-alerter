@@ -28,6 +28,7 @@ document.addEventListener('DOMContentLoaded', () => {
     sevFilter = (sevFilter === v) ? null : v; // clica de novo = limpa
     applyFilter();
   }));
+  document.getElementById('sortBy').addEventListener('change', applyFilter);
   load();
 });
 
@@ -60,25 +61,25 @@ function setStatusText(txt) { document.getElementById('statusBar').textContent =
 function render(st) {
   const bar = document.getElementById('statusBar');
   bar.className = 'status-bar';
-  const fb = document.getElementById('filterBox');
+  const fr = document.getElementById('filterRow');
   if (!st || st.state === 'unconfigured') {
     bar.classList.add('warn'); bar.textContent = t('cfg_url', lang);
-    setCounts({}); fb.style.display = 'none'; renderEmptyState(); return;
+    setCounts({}); fr.style.display = 'none'; renderEmptyState(); return;
   }
   if (st.state === 'no-session') {
     bar.classList.add('warn'); bar.textContent = t('no_session', lang);
-    setCounts({}); fb.style.display = 'none'; renderEmptyState(); return;
+    setCounts({}); fr.style.display = 'none'; renderEmptyState(); return;
   }
   if (st.state === 'error') {
     bar.classList.add('err'); bar.textContent = t('err', lang) + ': ' + (st.error || '?');
-    setCounts({}); fb.style.display = 'none'; allProblems = []; renderList([]); return;
+    setCounts({}); fr.style.display = 'none'; allProblems = []; renderList([]); return;
   }
   // ok
   bar.classList.add('ok');
   bar.textContent = `${st.total} ${t('active', lang)} (${st.via === 'token' ? t('via_token', lang) : t('via_session', lang)}) - ${ago(st.ts)}`;
   setCounts(st.bySev || {});
   allProblems = st.problems || [];
-  fb.style.display = allProblems.length ? '' : 'none'; // so mostra o filtro quando ha o que filtrar
+  fr.style.display = allProblems.length ? '' : 'none'; // so mostra o filtro quando ha o que filtrar
   applyFilter();
 }
 
@@ -93,6 +94,12 @@ function applyFilter() {
     const v = s.dataset.sev === 'info' ? 'info' : Number(s.dataset.sev);
     s.classList.toggle('active', sevFilter === v);
   });
+  // ordenacao: severidade (padrao), idade (mais antigos primeiro) ou host (A-Z)
+  const sortBy = document.getElementById('sortBy').value;
+  list = list.slice().sort((a, b) =>
+    sortBy === 'host' ? ((a.host || '').localeCompare(b.host || '') || Number(b.severity) - Number(a.severity))
+    : sortBy === 'age' ? (Number(a.clock) - Number(b.clock))
+    : (Number(b.severity) - Number(a.severity) || Number(b.clock) - Number(a.clock)));
   renderList(list, !!term || sevFilter !== null);
 }
 
