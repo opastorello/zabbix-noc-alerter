@@ -109,18 +109,22 @@ function renderList(problems, term) {
   }
   el.innerHTML = problems.map(p => {
     const [lbl, cls] = SEV[p.severity] || ['?', 'info'];
+    const snoozed = p.snoozedUntil && p.snoozedUntil > Date.now();
     const tags = (p.acknowledged ? '<span class="tag ackd">&#x2713; ACK</span>' : '')
       + (p.maintenance ? `<span class="tag mnt" title="${t('tag_maint', lang)}">MNT</span>`
         : (p.suppressed ? '<span class="tag">SUP</span>' : ''));
+    const snzBtn = snoozed
+      ? `<button class="snzbtn snoozed" data-ev="${p.eventid}" title="${t('snz_wake', lang)}">SNZ ${snzRemain(p.snoozedUntil)}</button>`
+      : (p.acknowledged ? '' : `<button class="snzbtn" data-ev="${p.eventid}" title="${t('snz_do', lang)}">SNZ</button>`);
     const ackBtn = p.acknowledged ? '' : `<button class="ackbtn" data-ev="${p.eventid}" title="${t('ack_do', lang)}">ACK</button>`;
-    return `<div class="row ${cls}${p.acknowledged ? ' is-ack' : ''}" role="button" tabindex="0" data-ev="${p.eventid}" data-tid="${p.objectid || ''}" data-hostid="${p.hostid || ''}" title="${t('open_problem', lang)}">
+    return `<div class="row ${cls}${p.acknowledged ? ' is-ack' : ''}${snoozed ? ' is-snoozed' : ''}" role="button" tabindex="0" data-ev="${p.eventid}" data-tid="${p.objectid || ''}" data-hostid="${p.hostid || ''}" title="${t('open_problem', lang)}">
       <span class="badge ${cls}">${lbl}</span>
       <div class="txt">
         ${p.host ? `<div class="host">${esc(p.host)}</div>` : ''}
         <div class="name" title="${esc(p.name)}">${esc(p.name)}</div>
         ${p.acknowledged && p.ackmsg ? `<div class="ackinfo" title="${esc(p.ackmsg)}">&#x2713; ${esc(p.ackmsg)}</div>` : ''}
       </div>
-      <div class="meta">${tags}${ackBtn}<span class="age">${ago(p.clock * 1000)}</span></div>
+      <div class="meta">${tags}${snzBtn}${ackBtn}<span class="age">${ago(p.clock * 1000)}</span></div>
     </div>`;
   }).join('');
 
@@ -129,6 +133,7 @@ function renderList(problems, term) {
       e.stopPropagation();
       const row = btn.closest('.row');
       const ev = btn.dataset.ev;
+      row.style.minHeight = row.offsetHeight + 'px'; // trava a altura: o editor nao encolhe a linha
       row.classList.add('editing');
       row.innerHTML = `<input class="ackmsg" type="text" maxlength="255" placeholder="${t('ack_ph', lang)}">
         <button class="ackok" title="${t('confirm', lang)}">&#x2713;</button>
@@ -152,6 +157,31 @@ function renderList(problems, term) {
     });
   });
 
+  // snooze: 💤 abre presets (15m/1h/4h); se ja snoozado, o botao "acorda"
+  el.querySelectorAll('.snzbtn').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const ev = btn.dataset.ev;
+      if (btn.classList.contains('snoozed')) { // ja snoozado -> acordar
+        chrome.runtime.sendMessage({ action: 'snoozeEvent', eventid: ev, ms: 0 }, () => setTimeout(load, 300));
+        return;
+      }
+      const row = btn.closest('.row');
+      row.style.minHeight = row.offsetHeight + 'px'; // trava a altura: o picker nao encolhe a linha
+      row.classList.add('editing');
+      row.innerHTML = `<button class="snzopt" data-ms="900000">15 min</button>
+        <button class="snzopt" data-ms="1800000">30 min</button>
+        <button class="snzopt" data-ms="3600000">1 h</button>
+        <button class="snzopt" data-ms="7200000">2 h</button>
+        <button class="snzopt" data-ms="14400000">4 h</button>
+        <button class="snzx" title="${t('cancel', lang)}">&#x2715;</button>`;
+      row.querySelectorAll('.snzopt').forEach(opt => opt.addEventListener('click', () => {
+        chrome.runtime.sendMessage({ action: 'snoozeEvent', eventid: ev, ms: Number(opt.dataset.ms) }, () => setTimeout(load, 300));
+      }));
+      row.querySelector('.snzx').addEventListener('click', load);
+    });
+  });
+
   // abrir o problema exato no Zabbix (clique OU teclado). problemUrl() vem do i18n.js (compartilhada).
   const openRow = (row) => {
     if (row.classList.contains('editing')) return;
@@ -165,14 +195,22 @@ function renderList(problems, term) {
   };
   el.querySelectorAll('.row[data-ev]').forEach(row => {
     row.addEventListener('click', (e) => {
-      if (e.target.closest('.ackbtn') || e.target.closest('.ackmsg')) return;
+      if (e.target.closest('.ackbtn') || e.target.closest('.ackmsg') || e.target.closest('.snzbtn')) return;
       openRow(row);
     });
     row.addEventListener('keydown', (e) => {
-      if (e.target.closest('.ackbtn') || e.target.closest('.ackmsg')) return;
+      if (e.target.closest('.ackbtn') || e.target.closest('.ackmsg') || e.target.closest('.snzbtn')) return;
       if (e.key === 'Enter' || e.key === ' ') { if (e.key === ' ') e.preventDefault(); openRow(row); }
     });
   });
+}
+
+// tempo restante do snooze, curto (ex.: 45m, 3h)
+function snzRemain(untilTs) {
+  const d = untilTs - Date.now();
+  if (d <= 0) return '';
+  if (d < HOUR_MS) return Math.max(1, Math.round(d / MIN_MS)) + 'm';
+  return Math.round(d / HOUR_MS) + 'h';
 }
 
 function ago(ms) {

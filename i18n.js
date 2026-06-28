@@ -38,7 +38,8 @@ const I18N = {
     nsev0: 'Não classif.', nsev1: 'Info', nsev2: 'Aviso', nsev3: 'Média', nsev4: 'Alta', nsev5: 'Desastre',
     failed: 'falhou', open_settings: 'Abrir configurações',
     ack_do: 'Reconhecer (ack)', ack_ph: 'mensagem do ack (opcional) - Enter confirma',
-    confirm: 'Confirmar', cancel: 'Cancelar', open_problem: 'Clique para abrir no Zabbix'
+    confirm: 'Confirmar', cancel: 'Cancelar', open_problem: 'Clique para abrir no Zabbix',
+    snz_do: 'Adiar (snooze)', snz_wake: 'Acordar'
   },
   en: {
     conn: 'Connection', zurl: 'Zabbix URL', zurl_ph: 'https://zabbix.yourcompany.com',
@@ -74,7 +75,8 @@ const I18N = {
     nsev0: 'Not classified', nsev1: 'Info', nsev2: 'Warning', nsev3: 'Average', nsev4: 'High', nsev5: 'Disaster',
     failed: 'failed', open_settings: 'Open settings',
     ack_do: 'Acknowledge (ack)', ack_ph: 'ack message (optional) - Enter to confirm',
-    confirm: 'Confirm', cancel: 'Cancel', open_problem: 'Click to open in Zabbix'
+    confirm: 'Confirm', cancel: 'Cancel', open_problem: 'Click to open in Zabbix',
+    snz_do: 'Snooze', snz_wake: 'Wake'
   },
   es: {
     conn: 'Conexión', zurl: 'URL de Zabbix', zurl_ph: 'https://zabbix.tuempresa.com',
@@ -110,7 +112,8 @@ const I18N = {
     nsev0: 'No clasif.', nsev1: 'Info', nsev2: 'Aviso', nsev3: 'Media', nsev4: 'Alta', nsev5: 'Desastre',
     failed: 'fallo', open_settings: 'Abrir configuración',
     ack_do: 'Reconocer (ack)', ack_ph: 'mensaje del ack (opcional) - Enter para confirmar',
-    confirm: 'Confirmar', cancel: 'Cancelar', open_problem: 'Clic para abrir en Zabbix'
+    confirm: 'Confirmar', cancel: 'Cancelar', open_problem: 'Clic para abrir en Zabbix',
+    snz_do: 'Posponer (snooze)', snz_wake: 'Despertar'
   }
 };
 
