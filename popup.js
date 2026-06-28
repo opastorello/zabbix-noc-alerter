@@ -5,6 +5,7 @@ const MIN_MS = 60000, HOUR_MS = 3600000, DAY_MS = 86400000; // janelas do "ha qu
 let cfg = {};
 let lang = 'pt';
 let allProblems = []; // lista completa do ultimo status (base pro filtro client-side)
+let sevFilter = null;  // filtro por severidade ao clicar numa stat (null | 5 | 4 | 3 | 2 | 'info')
 
 document.addEventListener('DOMContentLoaded', () => {
   lang = resolveLang(); applyI18n(lang); // idioma na hora: global + estaticos juntos (sem mistura PT/EN)
@@ -22,6 +23,11 @@ document.addEventListener('DOMContentLoaded', () => {
   const fb = document.getElementById('filterBox');
   fb.addEventListener('input', applyFilter);
   fb.addEventListener('keydown', (e) => { if (e.key === 'Escape') { fb.value = ''; applyFilter(); } });
+  document.querySelectorAll('.stats-row .stat').forEach(s => s.addEventListener('click', () => {
+    const v = s.dataset.sev === 'info' ? 'info' : Number(s.dataset.sev);
+    sevFilter = (sevFilter === v) ? null : v; // clica de novo = limpa
+    applyFilter();
+  }));
   load();
 });
 
@@ -79,10 +85,15 @@ function render(st) {
 // filtro client-side por host OU nome do problema (instantaneo, sem novo poll)
 function applyFilter() {
   const term = (document.getElementById('filterBox').value || '').trim().toLowerCase();
-  const filtered = term
-    ? allProblems.filter(p => ((p.host || '') + ' ' + (p.name || '')).toLowerCase().includes(term))
-    : allProblems;
-  renderList(filtered, term);
+  let list = allProblems;
+  if (sevFilter !== null) list = list.filter(p => sevFilter === 'info' ? Number(p.severity) <= 1 : Number(p.severity) === sevFilter);
+  if (term) list = list.filter(p => ((p.host || '') + ' ' + (p.name || '')).toLowerCase().includes(term));
+  // destaca a stat de severidade ativa
+  document.querySelectorAll('.stats-row .stat').forEach(s => {
+    const v = s.dataset.sev === 'info' ? 'info' : Number(s.dataset.sev);
+    s.classList.toggle('active', sevFilter === v);
+  });
+  renderList(list, !!term || sevFilter !== null);
 }
 
 // Estado vazio acionavel (sem URL / sem sessao): botao primario que abre as Opcoes.
@@ -101,10 +112,10 @@ function setCounts(bySev) {
   document.getElementById('cInfo').textContent = (bySev[1] || 0) + (bySev[0] || 0);
 }
 
-function renderList(problems, term) {
+function renderList(problems, filtered) {
   const el = document.getElementById('list');
   if (!problems.length) {
-    el.innerHTML = '<div class="empty">' + (term ? esc(t('no_match', lang)) : esc(t('none', lang)) + ' 🟢') + '</div>';
+    el.innerHTML = '<div class="empty">' + (filtered ? esc(t('no_match', lang)) : esc(t('none', lang)) + ' 🟢') + '</div>';
     return;
   }
   el.innerHTML = problems.map(p => {

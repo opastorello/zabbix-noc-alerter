@@ -23,11 +23,11 @@
     <div id="statusBar" class="status-bar" role="status" aria-live="polite" aria-atomic="true" data-i18n="loading">Carregando...</div>
 
     <div class="stats-row">
-      <div class="stat dis"><span id="cDis">0</span>DIS</div>
-      <div class="stat high"><span id="cHigh">0</span>HIGH</div>
-      <div class="stat avg"><span id="cAvg">0</span>AVG</div>
-      <div class="stat warn"><span id="cWarn">0</span>WARN</div>
-      <div class="stat info"><span id="cInfo">0</span>INFO</div>
+      <div class="stat dis" data-sev="5" data-i18n-title="filter_sev" title="Filtrar por severidade"><span id="cDis">0</span>DIS</div>
+      <div class="stat high" data-sev="4" data-i18n-title="filter_sev" title="Filtrar por severidade"><span id="cHigh">0</span>HIGH</div>
+      <div class="stat avg" data-sev="3" data-i18n-title="filter_sev" title="Filtrar por severidade"><span id="cAvg">0</span>AVG</div>
+      <div class="stat warn" data-sev="2" data-i18n-title="filter_sev" title="Filtrar por severidade"><span id="cWarn">0</span>WARN</div>
+      <div class="stat info" data-sev="info" data-i18n-title="filter_sev" title="Filtrar por severidade"><span id="cInfo">0</span>INFO</div>
     </div>
 
     <input type="text" id="filterBox" class="filter-box" data-i18n-ph="filter_ph" data-i18n-aria="filter_ph" placeholder="Filtrar host ou problema" autocomplete="off" style="display:none;">
