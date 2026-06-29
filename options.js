@@ -111,7 +111,7 @@ function createInstanceCard(inst, idx) {
     card.classList.toggle('disabled', !e.target.checked);
   });
   card.querySelector('.inst-test-btn').addEventListener('click', () => testInstance(card));
-  card.querySelector('.inst-remove-btn').addEventListener('click', () => removeInstance(idx));
+  card.querySelector('.inst-remove-btn').addEventListener('click', () => removeInstance(card));
   return card;
 }
 
@@ -126,17 +126,14 @@ function addInstance() {
   document.getElementById('addInstanceBtn').style.display = (idx + 1) >= MAX_INSTANCES ? 'none' : '';
 }
 
-function removeInstance(idx) {
+function removeInstance(card) {
+  card.remove();
+  // re-numerar
   const container = document.getElementById('instancesContainer');
-  const cards = container.querySelectorAll('.inst-card');
-  if (cards[idx]) {
-    cards[idx].remove();
-    // re-numerar
-    container.querySelectorAll('.inst-card').forEach((c, i) => {
-      c.dataset.idx = i;
-      c.querySelector('.inst-num').textContent = '#' + (i + 1);
-    });
-  }
+  container.querySelectorAll('.inst-card').forEach((c, i) => {
+    c.dataset.idx = i;
+    c.querySelector('.inst-num').textContent = '#' + (i + 1);
+  });
   document.getElementById('addInstanceBtn').style.display = '';
 }
 
@@ -245,4 +242,4 @@ function showAlert(msg, type) {
   setTimeout(() => { a.className = 'alert'; }, 5000);
 }
 
-function esc(s) { const d = document.createElement('span'); d.textContent = s || ''; return d.innerHTML; }
+function esc(s) { const d = document.createElement('span'); d.textContent = s || ''; return d.innerHTML.replace(/"/g, '&quot;'); }

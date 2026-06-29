@@ -536,6 +536,10 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     config = { ...DEFAULT_CONFIG, ...config, ...(msg.config || {}) };
     config = migrateConfig(config);
     saveConfig();
+    // Limpar instStatus de instancias removidas
+    const validIds = new Set((config.instances || []).map(i => i.id));
+    Object.keys(state.instStatus).forEach(id => { if (!validIds.has(id)) delete state.instStatus[id]; });
+    Object.keys(state.authModes).forEach(id => { if (!validIds.has(id)) delete state.authModes[id]; });
     state.initialized = false; // re-baseline: nao floodar com o que ja existe
     state.lastAlarmTs = 0;
     scheduleAlarm();
