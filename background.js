@@ -243,6 +243,7 @@ async function _pollZabbixOnce() {
   let allFresh = [];
   let allResolved = [];
   const newKnown = new Map();
+  const newInstStatus = {}; // reconstruido a cada poll: so as instancias habilitadas agora (sem status fantasma)
 
   results.forEach((r, idx) => {
     const inst = instances[idx];
@@ -253,11 +254,12 @@ async function _pollZabbixOnce() {
       allFresh.push(...v.fresh);
       allResolved.push(...v.resolved);
       v.currentMap.forEach((val, key) => newKnown.set(key, val));
-      state.instStatus[inst.id] = v.instStatus;
+      newInstStatus[inst.id] = v.instStatus;
     }
   });
 
   state.known = newKnown;
+  state.instStatus = newInstStatus; // troca atomica: instancia removida/desabilitada some do status
   if (!state.initialized) state.lastAlarmTs = Date.now();
   state.initialized = true;
 
