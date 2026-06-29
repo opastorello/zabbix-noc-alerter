@@ -69,8 +69,7 @@ function renderInstances(instances) {
   } else {
     instances.forEach((inst, idx) => {
       const card = createInstanceCard(inst, idx);
-      // com mais de uma instancia ja configurada, comeca recolhido pra nao poluir (clique no cabecalho expande)
-      if (instances.length > 1 && (inst.url || '').trim()) card.classList.add('collapsed');
+      card.classList.add('collapsed'); // ao acessar, toda instancia comeca recolhida (clique no cabecalho expande)
       container.appendChild(card);
     });
   }
