@@ -74,9 +74,10 @@ function render(st) {
     bar.classList.add('err'); bar.textContent = t('err', lang) + ': ' + (st.error || '?');
     setCounts({}); fr.style.display = 'none'; allProblems = []; renderList([]); return;
   }
-  // ok
+  // ok - multi-instance status
   bar.classList.add('ok');
-  bar.textContent = `${st.total} ${t('active', lang)} (${st.via === 'token' ? t('via_token', lang) : t('via_session', lang)}) - ${ago(st.ts)}`;
+  const instInfo = buildInstInfo(st.instStatus);
+  bar.textContent = `${st.total} ${t('active', lang)} ${instInfo} - ${ago(st.ts)}`;
   setCounts(st.bySev || {});
   allProblems = st.problems || [];
   fr.style.display = allProblems.length ? '' : 'none'; // so mostra o filtro quando ha o que filtrar
@@ -103,6 +104,18 @@ function applyFilter() {
   renderList(list, !!term || sevFilter !== null);
 }
 
+function buildInstInfo(instStatus) {
+  if (!instStatus) return '';
+  const entries = Object.values(instStatus).filter(s => s && s.label);
+  if (entries.length <= 1) {
+    const e = entries[0];
+    return e ? `(${e.via === 'token' ? t('via_token', lang) : t('via_session', lang)})` : '';
+  }
+  // multi: mostra quantas OK
+  const ok = entries.filter(e => e.state === 'ok').length;
+  return `(${ok}/${entries.length} OK)`;
+}
+
 // Estado vazio acionavel (sem URL / sem sessao): botao primario que abre as Opcoes.
 function renderEmptyState() {
   const el = document.getElementById('list');
@@ -125,20 +138,23 @@ function renderList(problems, filtered) {
     el.innerHTML = '<div class="empty">' + (filtered ? esc(t('no_match', lang)) : esc(t('none', lang)) + ' 🟢') + '</div>';
     return;
   }
+  // detectar se multi-instance (para mostrar o badge da instancia em cada linha)
+  const multiInst = new Set(problems.map(p => p.instId)).size > 1;
   el.innerHTML = problems.map(p => {
     const [lbl, cls] = SEV[p.severity] || ['?', 'info'];
     const snoozed = p.snoozedUntil && p.snoozedUntil > Date.now();
+    const instBadge = (multiInst && p.instLabel) ? `<span class="inst-badge">${esc(p.instLabel)}</span>` : '';
     const tags = (p.acknowledged ? '<span class="tag ackd">&#x2713; ACK</span>' : '')
       + (p.maintenance ? `<span class="tag mnt" title="${t('tag_maint', lang)}">MNT</span>`
         : (p.suppressed ? '<span class="tag">SUP</span>' : ''));
     const snzBtn = snoozed
-      ? `<button class="snzbtn snoozed" data-ev="${p.eventid}" title="${t('snz_wake', lang)}">SNZ ${snzRemain(p.snoozedUntil)}</button>`
-      : (p.acknowledged ? '' : `<button class="snzbtn" data-ev="${p.eventid}" title="${t('snz_do', lang)}">SNZ</button>`);
-    const ackBtn = p.acknowledged ? '' : `<button class="ackbtn" data-ev="${p.eventid}" title="${t('ack_do', lang)}">ACK</button>`;
-    return `<div class="row ${cls}${p.acknowledged ? ' is-ack' : ''}${snoozed ? ' is-snoozed' : ''}" role="button" tabindex="0" data-ev="${p.eventid}" data-tid="${p.objectid || ''}" data-hostid="${p.hostid || ''}" title="${t('open_problem', lang)}">
+      ? `<button class="snzbtn snoozed" data-ev="${p.eventid}" data-inst="${p.instId || ''}" title="${t('snz_wake', lang)}">SNZ ${snzRemain(p.snoozedUntil)}</button>`
+      : (p.acknowledged ? '' : `<button class="snzbtn" data-ev="${p.eventid}" data-inst="${p.instId || ''}" title="${t('snz_do', lang)}">SNZ</button>`);
+    const ackBtn = p.acknowledged ? '' : `<button class="ackbtn" data-ev="${p.eventid}" data-inst="${p.instId || ''}" title="${t('ack_do', lang)}">ACK</button>`;
+    return `<div class="row ${cls}${p.acknowledged ? ' is-ack' : ''}${snoozed ? ' is-snoozed' : ''}" role="button" tabindex="0" data-ev="${p.eventid}" data-tid="${p.objectid || ''}" data-hostid="${p.hostid || ''}" data-inst="${p.instId || ''}" title="${t('open_problem', lang)}">
       <span class="badge ${cls}">${lbl}</span>
       <div class="txt">
-        ${p.host ? `<div class="host">${esc(p.host)}</div>` : ''}
+        ${p.host ? `<div class="host">${instBadge}${esc(p.host)}</div>` : (instBadge ? `<div class="host">${instBadge}</div>` : '')}
         <div class="name" title="${esc(p.name)}">${esc(p.name)}</div>
         ${p.acknowledged && p.ackmsg ? `<div class="ackinfo" title="${esc(p.ackmsg)}">&#x2713; ${esc(p.ackmsg)}</div>` : ''}
       </div>
@@ -151,6 +167,7 @@ function renderList(problems, filtered) {
       e.stopPropagation();
       const row = btn.closest('.row');
       const ev = btn.dataset.ev;
+      const instId = btn.dataset.inst || row.dataset.inst || '';
       row.style.minHeight = row.offsetHeight + 'px'; // trava a altura: o editor nao encolhe a linha
       row.classList.add('editing');
       row.innerHTML = `<input class="ackmsg" type="text" maxlength="255" placeholder="${t('ack_ph', lang)}">
@@ -161,11 +178,10 @@ function renderList(problems, filtered) {
       const doAck = () => {
         const message = input.value.trim();
         row.innerHTML = '<span class="sending" role="status" aria-live="polite">' + esc(t('sending', lang)) + '</span>';
-        chrome.runtime.sendMessage({ action: 'ackEvent', eventid: ev, message }, (r) => {
-          // canal fechado (lastError) sem erro real = ack provavelmente foi -> recarrega
+        chrome.runtime.sendMessage({ action: 'ackEvent', eventid: ev, instId, message }, (r) => {
           if (chrome.runtime.lastError || (r && r.ok)) { setTimeout(load, 600); return; }
           const err = (r && r.error) || t('failed', lang);
-          row.innerHTML = `<span class="ackerr" role="status" aria-live="assertive" title="${esc(err)}">✘ ${esc(t('err', lang))}: ${esc(err).slice(0, 80)}</span>`;
+          row.innerHTML = `<span class="ackerr" role="status" aria-live="assertive" title="${esc(err)}">\u2718 ${esc(t('err', lang))}: ${esc(err).slice(0, 80)}</span>`;
           setTimeout(load, 4000);
         });
       };
@@ -180,8 +196,9 @@ function renderList(problems, filtered) {
     btn.addEventListener('click', (e) => {
       e.stopPropagation();
       const ev = btn.dataset.ev;
+      const instId = btn.dataset.inst || '';
       if (btn.classList.contains('snoozed')) { // ja snoozado -> acordar
-        chrome.runtime.sendMessage({ action: 'snoozeEvent', eventid: ev, ms: 0 }, () => setTimeout(load, 300));
+        chrome.runtime.sendMessage({ action: 'snoozeEvent', eventid: ev, instId, ms: 0 }, () => setTimeout(load, 300));
         return;
       }
       const row = btn.closest('.row');
@@ -194,7 +211,7 @@ function renderList(problems, filtered) {
         <button class="snzopt" data-ms="14400000">4 h</button>
         <button class="snzx" title="${t('cancel', lang)}">&#x2715;</button>`;
       row.querySelectorAll('.snzopt').forEach(opt => opt.addEventListener('click', () => {
-        chrome.runtime.sendMessage({ action: 'snoozeEvent', eventid: ev, ms: Number(opt.dataset.ms) }, () => setTimeout(load, 300));
+        chrome.runtime.sendMessage({ action: 'snoozeEvent', eventid: ev, instId, ms: Number(opt.dataset.ms) }, () => setTimeout(load, 300));
       }));
       row.querySelector('.snzx').addEventListener('click', load);
     });
@@ -203,7 +220,11 @@ function renderList(problems, filtered) {
   // abrir o problema exato no Zabbix (clique OU teclado). problemUrl() vem do i18n.js (compartilhada).
   const openRow = (row) => {
     if (row.classList.contains('editing')) return;
-    const base = (cfg.zabbixUrl || '').replace(/\/+$/, '');
+    // encontrar a URL base da instancia correta
+    const instId = row.dataset.inst || '';
+    const instances = (cfg.instances || []);
+    const inst = instances.find(i => i.id === instId) || instances[0];
+    const base = inst ? (inst.url || '').replace(/\/+$/, '') : (cfg.zabbixUrl || '').replace(/\/+$/, '');
     if (!base) return;
     const url = problemUrl(base, {
       objectid: row.dataset.tid, eventid: row.dataset.ev,

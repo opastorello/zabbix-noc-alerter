@@ -41,7 +41,12 @@ const I18N = {
     failed: 'falhou', open_settings: 'Abrir configurações',
     ack_do: 'Reconhecer (ack)', ack_ph: 'mensagem do ack (opcional) - Enter confirma',
     confirm: 'Confirmar', cancel: 'Cancelar', open_problem: 'Clique para abrir no Zabbix',
-    snz_do: 'Adiar (snooze)', snz_wake: 'Acordar'
+    snz_do: 'Adiar (snooze)', snz_wake: 'Acordar',
+    inst_label: 'Rótulo', inst_label_ph: 'Ex.: PRD, HML, Filial',
+    inst_url: 'URL do Zabbix', inst_token: 'Token de API (opcional)',
+    inst_enabled: 'Ativa', inst_add: 'Adicionar instância', inst_remove: 'Remover',
+    inst_section: 'Instâncias do Zabbix', inst_desc: 'Configure até 4 instâncias independentes. Cada uma pode usar sessão do navegador ou token.',
+    inst_test: 'Testar', inst_empty: 'Nenhuma instância configurada.'
   },
   en: {
     conn: 'Connection', zurl: 'Zabbix URL', zurl_ph: 'https://zabbix.yourcompany.com',
@@ -80,7 +85,12 @@ const I18N = {
     failed: 'failed', open_settings: 'Open settings',
     ack_do: 'Acknowledge (ack)', ack_ph: 'ack message (optional) - Enter to confirm',
     confirm: 'Confirm', cancel: 'Cancel', open_problem: 'Click to open in Zabbix',
-    snz_do: 'Snooze', snz_wake: 'Wake'
+    snz_do: 'Snooze', snz_wake: 'Wake',
+    inst_label: 'Label', inst_label_ph: 'E.g.: PRD, STG, Branch',
+    inst_url: 'Zabbix URL', inst_token: 'API token (optional)',
+    inst_enabled: 'Enabled', inst_add: 'Add instance', inst_remove: 'Remove',
+    inst_section: 'Zabbix Instances', inst_desc: 'Configure up to 4 independent instances. Each can use browser session or token.',
+    inst_test: 'Test', inst_empty: 'No instances configured.'
   },
   es: {
     conn: 'Conexión', zurl: 'URL de Zabbix', zurl_ph: 'https://zabbix.tuempresa.com',
@@ -119,7 +129,12 @@ const I18N = {
     failed: 'fallo', open_settings: 'Abrir configuración',
     ack_do: 'Reconocer (ack)', ack_ph: 'mensaje del ack (opcional) - Enter para confirmar',
     confirm: 'Confirmar', cancel: 'Cancelar', open_problem: 'Clic para abrir en Zabbix',
-    snz_do: 'Posponer (snooze)', snz_wake: 'Despertar'
+    snz_do: 'Posponer (snooze)', snz_wake: 'Despertar',
+    inst_label: 'Etiqueta', inst_label_ph: 'Ej.: PRD, HML, Sucursal',
+    inst_url: 'URL de Zabbix', inst_token: 'Token de API (opcional)',
+    inst_enabled: 'Activa', inst_add: 'Agregar instancia', inst_remove: 'Eliminar',
+    inst_section: 'Instancias de Zabbix', inst_desc: 'Configure hasta 4 instancias independientes. Cada una puede usar sesión del navegador o token.',
+    inst_test: 'Probar', inst_empty: 'Sin instancias configuradas.'
   }
 };
 

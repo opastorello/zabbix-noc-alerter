@@ -46,6 +46,15 @@
     .alert.error { background:var(--accent-dim); color:#ff8a8a; display:block; }
     footer { text-align:center; padding:14px 0 2px; font-size:10px; color:#666; border-top:1px solid var(--border); margin-top:20px; }
     footer a { color:var(--accent); text-decoration:none; font-weight:600; }
+    .inst-card { background:var(--bg); border:1px solid var(--border); border-radius:6px; padding:10px 12px; margin-bottom:8px; position:relative; }
+    .inst-card.disabled { opacity:0.5; }
+    .inst-header { display:flex; align-items:center; gap:8px; margin-bottom:8px; }
+    .inst-header .inst-num { font-size:10px; font-weight:700; color:var(--accent); background:var(--accent-dim); padding:2px 6px; border-radius:4px; }
+    .inst-header .inst-status { font-size:10px; margin-left:auto; }
+    .inst-row { display:flex; gap:8px; margin-bottom:6px; }
+    .inst-row .field { flex:1; margin-bottom:0; }
+    .inst-actions { display:flex; gap:6px; align-items:center; margin-top:6px; }
+    .inst-actions .btn-mini { padding:5px 10px; }
   </style>
 </head>
 <body>
@@ -62,22 +71,11 @@
   </div>
 
   <div class="section">
-    <h2 data-i18n="conn">Conexão</h2>
+    <h2 data-i18n="inst_section">Instâncias do Zabbix</h2>
     <div class="section-body">
-      <div class="field">
-        <label for="zabbixUrl" data-i18n="zurl">URL do Zabbix</label>
-        <input type="text" id="zabbixUrl" data-i18n-ph="zurl_ph" placeholder="https://zabbix.suaempresa.com" autocomplete="off">
-        <div class="desc" data-i18n="zurl_desc">Só o endereço base (sem /zabbix.php). Você define; nada vem hardcoded.</div>
-      </div>
-      <div class="field">
-        <label for="apiToken" data-i18n="token">Token de API (opcional)</label>
-        <input type="password" id="apiToken" data-i18n-ph="token_ph" placeholder="deixe vazio para usar a sessão aberta" autocomplete="off">
-        <div class="desc" data-i18n="token_desc">Vazio = usa o cookie da sessão logada no navegador (sem token).</div>
-      </div>
-      <div class="field" style="display:flex; gap:8px; align-items:center;">
-        <button id="testBtn" class="btn-test" data-i18n="test">Testar conexão</button>
-        <span id="testResult" style="font-size:11px;"></span>
-      </div>
+      <div class="desc" style="margin-bottom:10px;" data-i18n="inst_desc">Configure até 4 instâncias independentes. Cada uma pode usar sessão do navegador ou token.</div>
+      <div id="instancesContainer"></div>
+      <button id="addInstanceBtn" class="btn-test" style="margin-top:8px;" data-i18n="inst_add">Adicionar instância</button>
     </div>
   </div>
 

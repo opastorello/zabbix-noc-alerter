@@ -5,9 +5,12 @@
 
 importScripts('i18n.js'); // traducoes (I18N, t, resolveLang) tambem no service worker
 
+const DEFAULT_INSTANCE = { id: '', label: '', url: '', token: '', enabled: true };
+const MAX_INSTANCES = 4;
+
 const DEFAULT_CONFIG = {
-  zabbixUrl: '',          // ex.: https://zabbix.suaempresa.com  (definido pelo usuario)
-  apiToken: '',           // opcional; vazio = usa a sessao aberta (cookie zbx_session)
+  // Multi-instance: ate 4 Zabbix independentes, cada um com URL + token opcional
+  instances: [],          // [{id, label, url, token, enabled}] - migrado automaticamente do formato antigo
   pollInterval: 15,       // segundos entre checagens (timer no offscreen permite < 30s)
   repeatAlarm: true,      // re-tocar enquanto houver problema NAO-ackado (nag)
   repeatInterval: 60,     // segundos entre re-toques do nag
@@ -32,6 +35,23 @@ const DEFAULT_CONFIG = {
   lang: ''                // '' = auto (idioma do navegador); 'pt' | 'en' | 'es'
 };
 
+// Migra formato antigo (zabbixUrl/apiToken flat) para o novo (instances[])
+function migrateConfig(cfg) {
+  if (cfg.instances && cfg.instances.length) return cfg; // ja no formato novo
+  if (cfg.zabbixUrl) {
+    cfg.instances = [{ id: 'inst1', label: 'Zabbix', url: cfg.zabbixUrl, token: cfg.apiToken || '', enabled: true }];
+    delete cfg.zabbixUrl; delete cfg.apiToken;
+  } else {
+    cfg.instances = [];
+  }
+  return cfg;
+}
+
+// Retorna instancias habilitadas com URL preenchida
+function enabledInstances(cfg) {
+  return (cfg.instances || []).filter(i => i.enabled && i.url && i.url.trim());
+}
+
 const SEV_NAME = { 0: 'not_classified', 1: 'info', 2: 'warning', 3: 'average', 4: 'high', 5: 'disaster' };
 const SEV_COLOR = { 5: '#e45959', 4: '#e97659', 3: '#ffa059', 2: '#ffc859', 1: '#7499ff', 0: '#97aab3' };
 
@@ -47,13 +67,14 @@ const NOTIF_MAX = 200;
 let config = { ...DEFAULT_CONFIG };
 let state = {
   initialized: false,     // ja fez baseline? (evita flood no 1o poll)
-  known: new Map(),       // eventid -> {name, host, severity} dos ativos
+  known: new Map(),       // "instId:eventid" -> {name, host, severity, instId, instLabel} dos ativos
   notifUrls: {},          // notifId -> url (fast-path em memoria; persistido em storage.session)
   lastAlarmTs: 0,         // ultimo toque de som (pro nag)
   lastSeenTs: 0,          // quando o popup foi aberto pela ultima vez (base do badge de 'nao vistos')
-  snoozes: {},            // eventid -> timestamp ate quando o problema fica em silencio (snooze individual)
-  authMode: null,         // 'header' | 'body' = modo de auth descoberto (cache; evita 2x request no 6.x)
-  status: { state: 'unconfigured' }
+  snoozes: {},            // "instId:eventid" -> timestamp ate quando o problema fica em silencio (snooze individual)
+  authModes: {},          // instId -> 'header' | 'body' = modo de auth por instancia (cache; evita 2x request no 6.x)
+  status: { state: 'unconfigured' },
+  instStatus: {}          // instId -> {state, via, error, total, ...} status individual
 };
 let _pollInFlight = false, _pollAgain = false; // mutex + coalescing do poll
 
@@ -61,7 +82,11 @@ let _pollInFlight = false, _pollAgain = false; // mutex + coalescing do poll
 // Init
 // =====================================================
 chrome.storage.local.get(['config', 'lastSeenTs', 'snoozes'], async (r) => {
-  if (r.config) config = { ...DEFAULT_CONFIG, ...r.config };
+  if (r.config) {
+    config = { ...DEFAULT_CONFIG, ...r.config };
+    config = migrateConfig(config);
+    saveConfig(); // persiste migracao do formato antigo (zabbixUrl/apiToken -> instances[]) se houve
+  }
   // 1a vez: ancora "visto" no agora (nao marca os problemas ja existentes como novos)
   state.lastSeenTs = r.lastSeenTs || Date.now();
   if (!r.lastSeenTs) chrome.storage.local.set({ lastSeenTs: state.lastSeenTs });
@@ -133,7 +158,7 @@ function errText(e, status) {
   return 'HTTP ' + status + ' (sem JSON)';
 }
 
-async function apiCall(baseUrl, method, params, token) {
+async function apiCall(baseUrl, method, params, token, instId) {
   const url = baseUrl + '/api_jsonrpc.php';
   const body = { jsonrpc: '2.0', method, params, id: 1 };
 
@@ -157,23 +182,20 @@ async function apiCall(baseUrl, method, params, token) {
 
   if (!token) throw new Error(t('e_nocred', resolveLang(config.lang)));
 
-  // ordem: o modo que ja funcionou nesta sessao primeiro (cache) -> evita 2x request no 6.x;
-  // senao Bearer (7.0+) e cai pro body 'auth' (6.x).
-  const order = state.authMode === 'body' ? ['body', 'header'] : ['header', 'body'];
+  // ordem: o modo que ja funcionou nesta instancia primeiro (cache)
+  const cachedMode = instId ? state.authModes[instId] : null;
+  const order = cachedMode === 'body' ? ['body', 'header'] : ['header', 'body'];
   const tried = {};
   for (const mode of order) {
     const r = await call(mode);
     tried[mode] = r;
-    if (r.data && !r.data.error) { state.authMode = mode; return r.data.result; }
+    if (r.data && !r.data.error) { if (instId) state.authModes[instId] = mode; return r.data.result; }
   }
 
-  // ambos falharam: mostrar o erro mais diagnostico. Em auth por sessao (6.x) o erro do
-  // body e o verdadeiro; manter tambem o do Bearer (verdadeiro no 7.x). Dedup quando iguais.
   const bodyErr = tried.body && tried.body.data && tried.body.data.error && errText(tried.body.data.error, tried.body.res.status);
   const headerErr = tried.header && tried.header.data && tried.header.data.error && errText(tried.header.data.error, tried.header.res.status);
   const msg = [...new Set([bodyErr, headerErr].filter(Boolean))].join(' / ')
     || ('HTTP ' + ((tried.header || tried.body).res.status));
-  // condicao esperada (sessao expirada, sem permissao...) -> warn, nao error; quem chama decide a UI
   console.warn('[zbx] ' + method + ' falhou:', msg);
   throw new Error(msg);
 }
@@ -199,25 +221,164 @@ function inMaintenance(p) {
     && p.suppression_data.some(s => s && s.maintenanceid && s.maintenanceid !== '0');
 }
 
-// snooze individual: silencia UM problema (por eventid) ate um horario, sem mute global.
-// (quando a multi-instancia entrar, a chave deve virar instId:eventid)
+// snooze individual: silencia UM problema (chave composta instId:eventid) ate um horario, sem mute global.
+// A chave inclui a instancia para nao misturar eventids iguais vindos de Zabbix diferentes.
+function snzKey(p) { return (p._instId || '') + ':' + p.eventid; }
 function isSnoozed(p) {
-  return Number(state.snoozes[p.eventid] || 0) > Date.now();
+  return Number(state.snoozes[snzKey(p)] || 0) > Date.now();
 }
 function saveSnoozes() {
   chrome.storage.local.set({ snoozes: state.snoozes });
 }
 
 async function _pollZabbixOnce() {
-  const base = normalizeUrl(config.zabbixUrl);
-  if (!base) { setStatus({ state: 'unconfigured' }); setBadge('', ''); return; }
+  const instances = enabledInstances(config);
+  if (!instances.length) { setStatus({ state: 'unconfigured' }); setBadge('', ''); return; }
 
-  let token = (config.apiToken || '').trim();
+  // Poll todas as instancias em paralelo
+  const results = await Promise.allSettled(instances.map(inst => _pollInstance(inst)));
+
+  // Agregar resultados
+  let allActive = [];
+  let allFresh = [];
+  let allResolved = [];
+  const newKnown = new Map();
+
+  results.forEach((r, idx) => {
+    const inst = instances[idx];
+    if (r.status === 'fulfilled' && r.value) {
+      const v = r.value;
+      v.active.forEach(p => { p._instId = inst.id; p._instLabel = inst.label; });
+      allActive.push(...v.active);
+      allFresh.push(...v.fresh);
+      allResolved.push(...v.resolved);
+      v.currentMap.forEach((val, key) => newKnown.set(key, val));
+      state.instStatus[inst.id] = v.instStatus;
+    }
+  });
+
+  state.known = newKnown;
+  if (!state.initialized) state.lastAlarmTs = Date.now();
+  state.initialized = true;
+
+  // URL base da instancia de um problema (pelo _instId nos ativos, ou instId nos resolvidos)
+  const baseFor = (instId) => {
+    const inst = instances.find(i => i.id === instId) || instances[0];
+    return normalizeUrl(inst.url);
+  };
+
+  // contagem por severidade (global)
+  const bySev = { 5: 0, 4: 0, 3: 0, 2: 0, 1: 0, 0: 0 };
+  allActive.forEach(p => { bySev[Number(p.severity)] = (bySev[Number(p.severity)] || 0) + 1; });
+  const maxSev = allActive.reduce((m, p) => Math.max(m, Number(p.severity)), 0);
+
+  // limpa snoozes expirados ou de problemas que sairam da lista; coleta os que expiraram
+  // com o problema AINDA ativo -> re-alertar ("o snooze acabou e o problema continua").
+  const _snzNow = Date.now();
+  const _activeKeys = new Set(allActive.map(p => snzKey(p)));
+  let _snzChanged = false;
+  const justWoke = [];
+  for (const key of Object.keys(state.snoozes)) {
+    if (state.snoozes[key] <= _snzNow) {
+      if (_activeKeys.has(key)) justWoke.push(key); // expirou e o problema ainda existe
+      delete state.snoozes[key]; _snzChanged = true;
+    } else if (!_activeKeys.has(key)) {
+      delete state.snoozes[key]; _snzChanged = true; // problema resolvido durante o snooze
+    }
+  }
+  if (_snzChanged) saveSnoozes();
+
+  setStatus({
+    state: 'ok',
+    total: allActive.length,
+    bySev,
+    freshCount: allFresh.length,
+    instStatus: state.instStatus,
+    problems: allActive
+      .sort((a, b) => Number(b.severity) - Number(a.severity) || Number(b.clock) - Number(a.clock))
+      .slice(0, MAX_PROBLEMS_UI)
+      .map(p => ({
+        eventid: p.eventid, objectid: p.objectid, hostid: p.hostid || '', name: p.name, host: p.host || '',
+        severity: Number(p.severity), clock: Number(p.clock), acknowledged: p.acknowledged === '1',
+        suppressed: p.suppressed === '1', maintenance: inMaintenance(p),
+        snoozedUntil: Number(state.snoozes[snzKey(p)] || 0), ackmsg: p.ackmsg || '',
+        instId: p._instId, instLabel: p._instLabel
+      }))
+  });
+
+  // badge: total de ativos (padrao) ou so os "nao vistos" desde a ultima abertura do popup
+  if (config.badgeUnseen) {
+    const unseen = allActive.filter(p => Number(p.clock) * 1000 > state.lastSeenTs);
+    const unseenMax = unseen.reduce((m, p) => Math.max(m, Number(p.severity)), 0);
+    setBadge(unseen.length ? String(unseen.length) : '', SEV_COLOR[unseenMax] || '#97aab3');
+  } else {
+    setBadge(allActive.length ? String(allActive.length) : '', SEV_COLOR[maxSev] || '#97aab3');
+  }
+
+  // dispara alerta
+  const now = Date.now();
+  if (!config.muted) {
+    // NOVOS: som + notificacao imediatos. Manutencao NAO alarma (so aparece na lista, com a tag MNT).
+    const freshAlert = allFresh.filter(p => !inMaintenance(p) && !isSnoozed(p));
+    if (freshAlert.length) {
+      const freshMax = freshAlert.reduce((m, p) => Math.max(m, Number(p.severity)), 0);
+      if (config.soundEnabled) { playSound(soundForSeverity(freshMax), config.volume); state.lastAlarmTs = now; }
+      if (config.notificationsEnabled) {
+        freshAlert.sort((a, b) => Number(b.severity) - Number(a.severity));
+        freshAlert.slice(0, MAX_NOTIFS_PER_POLL).forEach(p => notify(p, baseFor(p._instId)));
+      }
+    }
+    // SNOOZE ACABOU: re-alerta na hora (som + notificacao), mesmo com re-alarme off e sem ser "novo".
+    if (justWoke.length) {
+      const woke = allActive.filter(p => justWoke.includes(snzKey(p)) && p.acknowledged !== '1' && !inMaintenance(p));
+      if (woke.length) {
+        const wokeMax = woke.reduce((m, p) => Math.max(m, Number(p.severity)), 0);
+        if (config.soundEnabled) { playSound(soundForSeverity(wokeMax), config.volume); state.lastAlarmTs = now; }
+        if (config.notificationsEnabled) {
+          woke.sort((a, b) => Number(b.severity) - Number(a.severity));
+          woke.slice(0, MAX_NOTIFS_PER_POLL).forEach(p => notify(p, baseFor(p._instId)));
+        }
+      }
+    }
+    // NAG: re-alarma enquanto houver problema NAO-ackado (som + notificacao, ate dar ack ou mute)
+    if (config.repeatAlarm && (config.soundEnabled || (config.notificationsEnabled && config.nagNotify))) {
+      const nagPool = allActive.filter(p => p.acknowledged !== '1' && !inMaintenance(p) && !isSnoozed(p)); // manutencao/snooze nao re-alarmam
+      const gap = Math.max(MIN_POLL_SEC, Number(config.repeatInterval) || 60) * 1000;
+      if (nagPool.length && (now - (state.lastAlarmTs || 0)) >= gap) {
+        const nagMax = nagPool.reduce((m, p) => Math.max(m, Number(p.severity)), 0);
+        if (config.soundEnabled) playSound(soundForSeverity(nagMax), config.volume);
+        // re-notifica o problema de maior severidade com id FIXO -> atualiza no lugar (sem flood)
+        if (config.notificationsEnabled && config.nagNotify) {
+          const top = nagPool.find(p => Number(p.severity) === nagMax) || nagPool[0];
+          notify(top, baseFor(top._instId), 'zbx-nag');
+        }
+        state.lastAlarmTs = now;
+      } else if (!nagPool.length) {
+        chrome.notifications.clear('zbx-nag'); // ackou/resolveu tudo -> some a notificacao do re-alarme
+      }
+    }
+  }
+
+  // RESOLVIDOS
+  if (config.notifyResolved && config.notificationsEnabled && allResolved.length) {
+    allResolved.slice(0, MAX_NOTIFS_PER_POLL).forEach(p => notifyResolved(p, baseFor(p.instId)));
+  }
+}
+
+// Poll de UMA instancia - retorna {active, fresh, resolved, currentMap, instStatus}
+async function _pollInstance(inst) {
+  const base = normalizeUrl(inst.url);
+  if (!base) return null;
+
+  let token = (inst.token || '').trim();
   let via = 'token';
   if (!token) {
     token = await getSessionId(base);
     via = 'session';
-    if (!token) { setStatus({ state: 'no-session', via }); setBadge('!', '#97aab3'); return; }
+    if (!token) {
+      state.instStatus[inst.id] = { state: 'no-session', via, label: inst.label };
+      return { active: [], fresh: [], resolved: [], currentMap: new Map(), instStatus: { state: 'no-session', via, label: inst.label } };
+    }
   }
 
   let problems;
@@ -231,29 +392,22 @@ async function _pollZabbixOnce() {
       sortorder: 'DESC',
       limit: MAX_PROBLEMS_FETCH
     };
-    // filtra severidade no servidor: nao trazer 500 problemas baixos so pra descartar no cliente
-    // (com sort por eventid, ruido de baixa severidade poderia esconder disasters no teto de 500)
     const _min = Number(config.minSeverity) || 0;
     if (_min > 0) pget.severities = Array.from({ length: 6 - _min }, (_, i) => _min + i);
-    problems = await apiCall(base, 'problem.get', pget, token);
+    problems = await apiCall(base, 'problem.get', pget, token, inst.id);
   } catch (e) {
     const emsg = String((e && e.message) || e);
-    // cookie presente mas sessao expirada -> 'Not authorized'. Tratar como acionavel (relogar),
-    // nao como erro cru. So quando via=session (no modo token o erro de auth e config, nao login).
     if (via === 'session' && /not authorized|session terminated|re-login|reauthorization|need to be logged/i.test(emsg)) {
-      setStatus({ state: 'no-session', via });
-      setBadge('!', '#97aab3');
-      return;
+      const s = { state: 'no-session', via, label: inst.label };
+      return { active: [], fresh: [], resolved: [], currentMap: new Map(), instStatus: s };
     }
-    setStatus({ state: 'error', via, error: emsg });
-    setBadge('x', '#e45959');
-    return;
+    const s = { state: 'error', via, error: emsg, label: inst.label };
+    return { active: [], fresh: [], resolved: [], currentMap: new Map(), instStatus: s };
   }
 
   if (!Array.isArray(problems)) problems = [];
 
-  // filtro (severidade minima + ack/suprimido)
-  const maxAgeMs = (Number(config.maxAgeDays) || 0) * 86400 * 1000; // espelha "Age less than N days" do Zabbix (0 = sem limite)
+  const maxAgeMs = (Number(config.maxAgeDays) || 0) * 86400 * 1000;
   let active = problems.filter(p => {
     if (Number(p.severity) < Number(config.minSeverity)) return false;
     if (config.ignoreAckd && p.acknowledged === '1') return false;
@@ -264,15 +418,15 @@ async function _pollZabbixOnce() {
     return true;
   });
 
-  // resolve o HOST de cada problema (problem.get nao traz host nesta versao -> via trigger.get)
+  // resolve hosts
   const tids = [...new Set(active.map(p => p.objectid).filter(Boolean))];
   const hostMap = {};
   if (tids.length) {
     try {
-      const trg = await apiCall(base, 'trigger.get', { triggerids: tids, output: ['triggerid'], selectHosts: ['hostid', 'name'] }, token);
+      const trg = await apiCall(base, 'trigger.get', { triggerids: tids, output: ['triggerid'], selectHosts: ['hostid', 'name'] }, token, inst.id);
       (trg || []).forEach(t => { const h = (t.hosts && t.hosts[0]) || {}; hostMap[t.triggerid] = { name: h.name || '', hostid: h.hostid || '' }; });
     } catch (e) {
-      console.warn('[zbx] trigger.get falhou; hosts ficarao vazios neste poll:', String((e && e.message) || e));
+      console.warn('[zbx][' + inst.label + '] trigger.get falhou:', String((e && e.message) || e));
     }
   }
   active.forEach(p => {
@@ -281,7 +435,7 @@ async function _pollZabbixOnce() {
     p.ackmsg = acks.length ? acks[acks.length - 1].message : '';
   });
 
-  // filtro 2: excluir por texto (nome OU host contem) - corta lixo cronico; separa por virgula ou quebra de linha
+  // filtro exclude
   const exTerms = (config.excludePatterns || '').split(/[\n,]/).map(s => s.trim().toLowerCase()).filter(Boolean);
   if (exTerms.length) {
     active = active.filter(p => {
@@ -290,109 +444,27 @@ async function _pollZabbixOnce() {
     });
   }
 
-  const currentMap = new Map(active.map(p => [p.eventid, { name: p.name, host: p.host || '', hostid: p.hostid || '', objectid: p.objectid || '', severity: Number(p.severity) }]));
+  // chave composta instId:eventid
+  const currentMap = new Map(active.map(p => [inst.id + ':' + p.eventid, {
+    name: p.name, host: p.host || '', hostid: p.hostid || '', objectid: p.objectid || '',
+    severity: Number(p.severity), instId: inst.id, instLabel: inst.label
+  }]));
 
-  // novos (fresh) e resolvidos (sairam da lista) - so depois do baseline
+  // novos e resolvidos
   let fresh = [], resolved = [];
   if (state.initialized) {
-    fresh = active.filter(p => !state.known.has(p.eventid));
-    for (const [id, d] of state.known) { if (!currentMap.has(id)) resolved.push({ eventid: id, ...d }); }
-  } else {
-    state.lastAlarmTs = Date.now(); // baseline silencioso
-  }
-  state.known = currentMap;
-  state.initialized = true;
-
-  // contagem por severidade
-  const bySev = { 5: 0, 4: 0, 3: 0, 2: 0, 1: 0, 0: 0 };
-  active.forEach(p => { bySev[Number(p.severity)] = (bySev[Number(p.severity)] || 0) + 1; });
-  const maxSev = active.reduce((m, p) => Math.max(m, Number(p.severity)), 0);
-
-  // limpa snoozes expirados ou de problemas que sairam da lista; coleta os que expiraram
-  // com o problema AINDA ativo -> re-alertar ("o snooze acabou e o problema continua").
-  const _snzNow = Date.now();
-  const _activeIds = new Set(active.map(p => p.eventid));
-  let _snzChanged = false;
-  const justWoke = [];
-  for (const id of Object.keys(state.snoozes)) {
-    if (state.snoozes[id] <= _snzNow) {
-      if (_activeIds.has(id)) justWoke.push(id); // expirou e o problema ainda existe
-      delete state.snoozes[id]; _snzChanged = true;
-    } else if (!_activeIds.has(id)) {
-      delete state.snoozes[id]; _snzChanged = true; // problema resolvido durante o snooze
-    }
-  }
-  if (_snzChanged) saveSnoozes();
-
-  setStatus({
-    state: 'ok', via,
-    total: active.length,
-    bySev,
-    freshCount: fresh.length,
-    problems: active.slice(0, MAX_PROBLEMS_UI).map(p => ({
-      eventid: p.eventid, objectid: p.objectid, hostid: p.hostid || '', name: p.name, host: p.host || '', severity: Number(p.severity),
-      clock: Number(p.clock), acknowledged: p.acknowledged === '1', suppressed: p.suppressed === '1',
-      maintenance: inMaintenance(p), snoozedUntil: Number(state.snoozes[p.eventid] || 0), ackmsg: p.ackmsg || ''
-    }))
-  });
-
-  // badge: total de ativos (padrao) ou so os "nao vistos" desde a ultima abertura do popup
-  if (config.badgeUnseen) {
-    const unseen = active.filter(p => Number(p.clock) * 1000 > state.lastSeenTs);
-    const unseenMax = unseen.reduce((m, p) => Math.max(m, Number(p.severity)), 0);
-    setBadge(unseen.length ? String(unseen.length) : '', SEV_COLOR[unseenMax] || '#97aab3');
-  } else {
-    setBadge(active.length ? String(active.length) : '', SEV_COLOR[maxSev] || '#97aab3');
-  }
-
-  // dispara alerta
-  const now = Date.now();
-  if (!config.muted) {
-    // NOVOS: som + notificacao imediatos. Manutencao NAO alarma (so aparece na lista, com a tag MNT).
-    const freshAlert = fresh.filter(p => !inMaintenance(p) && !isSnoozed(p));
-    if (freshAlert.length) {
-      const freshMax = freshAlert.reduce((m, p) => Math.max(m, Number(p.severity)), 0);
-      if (config.soundEnabled) { playSound(soundForSeverity(freshMax), config.volume); state.lastAlarmTs = now; }
-      if (config.notificationsEnabled) {
-        freshAlert.sort((a, b) => Number(b.severity) - Number(a.severity));
-        freshAlert.slice(0, MAX_NOTIFS_PER_POLL).forEach(p => notify(p, base));
-      }
-    }
-    // SNOOZE ACABOU: re-alerta na hora (som + notificacao), mesmo com re-alarme off e sem ser "novo".
-    if (justWoke.length) {
-      const woke = active.filter(p => justWoke.includes(p.eventid) && p.acknowledged !== '1' && !inMaintenance(p));
-      if (woke.length) {
-        const wokeMax = woke.reduce((m, p) => Math.max(m, Number(p.severity)), 0);
-        if (config.soundEnabled) { playSound(soundForSeverity(wokeMax), config.volume); state.lastAlarmTs = now; }
-        if (config.notificationsEnabled) {
-          woke.sort((a, b) => Number(b.severity) - Number(a.severity));
-          woke.slice(0, MAX_NOTIFS_PER_POLL).forEach(p => notify(p, base));
-        }
-      }
-    }
-    // NAG: re-alarma enquanto houver problema NAO-ackado (som + notificacao, ate dar ack ou mute)
-    if (config.repeatAlarm && (config.soundEnabled || (config.notificationsEnabled && config.nagNotify))) {
-      const nagPool = active.filter(p => p.acknowledged !== '1' && !inMaintenance(p) && !isSnoozed(p)); // manutencao/snooze nao re-alarmam
-      const gap = Math.max(MIN_POLL_SEC, Number(config.repeatInterval) || 60) * 1000;
-      if (nagPool.length && (now - (state.lastAlarmTs || 0)) >= gap) {
-        const nagMax = nagPool.reduce((m, p) => Math.max(m, Number(p.severity)), 0);
-        if (config.soundEnabled) playSound(soundForSeverity(nagMax), config.volume);
-        // re-notifica o problema de maior severidade com id FIXO -> atualiza no lugar (sem flood)
-        if (config.notificationsEnabled && config.nagNotify) {
-          const top = nagPool.find(p => Number(p.severity) === nagMax) || nagPool[0];
-          notify(top, base, 'zbx-nag');
-        }
-        state.lastAlarmTs = now;
-      } else if (!nagPool.length) {
-        chrome.notifications.clear('zbx-nag'); // ackou/resolveu tudo -> some a notificacao do re-alarme
+    // novos e resolvidos por instancia (chave composta instId:eventid). O alerta/badge/snooze/nag
+    // sao decididos no agregador (_pollZabbixOnce) sobre o conjunto de TODAS as instancias.
+    fresh = active.filter(p => !state.known.has(inst.id + ':' + p.eventid));
+    for (const [key, d] of state.known) {
+      if (key.startsWith(inst.id + ':') && !currentMap.has(key)) {
+        resolved.push({ eventid: key.split(':')[1], ...d });
       }
     }
   }
 
-  // RESOLVIDOS: notificacao de recuperacao (aparece mesmo mutado - e so notificacao)
-  if (config.notifyResolved && config.notificationsEnabled && resolved.length) {
-    resolved.slice(0, MAX_NOTIFS_PER_POLL).forEach(p => notifyResolved(p, base));
-  }
+  const instStatus = { state: 'ok', via, label: inst.label, total: active.length };
+  return { active, fresh, resolved, currentMap, instStatus };
 }
 
 function soundForSeverity(sev) {
@@ -463,7 +535,7 @@ function notifyResolved(p, base) {
   chrome.notifications.create(id, {
     type: 'basic',
     iconUrl: 'icons/icon128.png',
-    title: '✓ ' + t('n_resolved', resolveLang(config.lang)) + ' - ' + (p.host || 'Zabbix'),
+    title: '\u2713 ' + t('n_resolved', resolveLang(config.lang)) + ' - ' + (p.host || 'Zabbix'),
     message: p.name || '(...)',
     contextMessage: 'Zabbix NOC Alerter - ' + t('n_recovered', resolveLang(config.lang)),
     priority: 1,
@@ -543,8 +615,9 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   }
 
   if (msg.action === 'snoozeEvent') {
-    // ms > 0: silenciar este eventid por X ms; ms <= 0: acordar (remover o snooze)
-    const id = String(msg.eventid);
+    // ms > 0: silenciar este problema por X ms; ms <= 0: acordar (remover o snooze)
+    // chave composta instId:eventid (nao mistura eventids iguais de instancias diferentes)
+    const id = (msg.instId || '') + ':' + String(msg.eventid);
     const ms = Number(msg.ms) || 0;
     if (ms > 0) state.snoozes[id] = Date.now() + ms; else delete state.snoozes[id];
     saveSnoozes();
@@ -554,7 +627,12 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
   if (msg.action === 'setConfig') {
     config = { ...DEFAULT_CONFIG, ...config, ...(msg.config || {}) };
+    config = migrateConfig(config);
     saveConfig();
+    // Limpar instStatus de instancias removidas
+    const validIds = new Set((config.instances || []).map(i => i.id));
+    Object.keys(state.instStatus).forEach(id => { if (!validIds.has(id)) delete state.instStatus[id]; });
+    Object.keys(state.authModes).forEach(id => { if (!validIds.has(id)) delete state.authModes[id]; });
     state.initialized = false; // re-baseline: nao floodar com o que ja existe
     state.lastAlarmTs = 0;
     scheduleAlarm();
@@ -607,17 +685,18 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.action === 'ackEvent') {
     (async () => {
       try {
-        const base = normalizeUrl(config.zabbixUrl);
-        let token = (config.apiToken || '').trim();
+        const inst = (config.instances || []).find(i => i.id === msg.instId);
+        if (!inst) { sendResponse({ ok: false, error: 'Instance not found' }); return; }
+        const base = normalizeUrl(inst.url);
+        let token = (inst.token || '').trim();
         if (!token) token = await getSessionId(base);
         if (!token) { sendResponse({ ok: false, error: t('e_nocred', resolveLang(config.lang)) }); return; }
-        // action 6 = acknowledge(2) + add message(4)
         const r = await apiCall(base, 'event.acknowledge', {
           eventids: [String(msg.eventid)], action: 6, message: msg.message || t('ack_msg', resolveLang(config.lang))
-        }, token);
-        console.log('[zbx] ack OK', msg.eventid, 'via', token.length, r);
+        }, token, inst.id);
+        console.log('[zbx] ack OK', msg.eventid, 'inst:', inst.label, r);
         sendResponse({ ok: true });
-        pollZabbix(); // refresca em background, sem segurar a resposta
+        pollZabbix();
       } catch (e) {
         console.error('[zbx] ack FALHOU', msg.eventid, e);
         sendResponse({ ok: false, error: String((e && e.message) || e || t('failed', resolveLang(config.lang))) });
@@ -628,15 +707,16 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
   if (msg.action === 'testConnection') {
     (async () => {
-      const base = normalizeUrl(msg.zabbixUrl ?? config.zabbixUrl);
+      const base = normalizeUrl(msg.zabbixUrl || '');
       if (!base) { sendResponse({ ok: false, error: t('e_nourl', resolveLang(config.lang)) }); return; }
-      let token = (msg.apiToken ?? config.apiToken ?? '').trim();
+      let token = (msg.apiToken || '').trim();
       let via = 'token';
       if (!token) { token = await getSessionId(base); via = 'session'; }
       if (!token) { sendResponse({ ok: false, via, error: t('no_session', resolveLang(config.lang)) }); return; }
       try {
-        const r = await apiCall(base, 'problem.get', { output: ['eventid'], limit: 1 }, token);
-        const ver = await apiCall(base, 'apiinfo.version', {}, null).catch(() => null);
+        const instId = msg.instId || 'test';
+        const r = await apiCall(base, 'problem.get', { output: ['eventid'], limit: 1 }, token, instId);
+        const ver = await apiCall(base, 'apiinfo.version', {}, null, instId).catch(() => null);
         sendResponse({ ok: true, via, sample: Array.isArray(r) ? r.length : 0, version: ver });
       } catch (e) {
         sendResponse({ ok: false, via, error: String(e.message || e) });
