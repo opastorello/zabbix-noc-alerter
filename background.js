@@ -6,10 +6,10 @@
 importScripts('i18n.js'); // traducoes (I18N, t, resolveLang) tambem no service worker
 
 const DEFAULT_INSTANCE = { id: '', label: '', url: '', token: '', enabled: true };
-const MAX_INSTANCES = 4;
+const MAX_INSTANCES = 8;
 
 const DEFAULT_CONFIG = {
-  // Multi-instance: ate 4 Zabbix independentes, cada um com URL + token opcional
+  // Multi-instance: ate 8 Zabbix independentes, cada um com URL + token opcional
   instances: [],          // [{id, label, url, token, enabled}] - migrado automaticamente do formato antigo
   pollInterval: 15,       // segundos entre checagens (timer no offscreen permite < 30s)
   repeatAlarm: true,      // re-tocar enquanto houver problema NAO-ackado (nag)

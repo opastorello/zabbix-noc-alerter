@@ -8,7 +8,7 @@ const SOUNDS = [
   'descending', 'nuclear', 'industrial', 'gong', 'oldphone', 'seatbelt', 'buzzer',
   'flatline', 'chime'
 ];
-const MAX_INSTANCES = 4;
+const MAX_INSTANCES = 8;
 const NUM = ['pollInterval', 'repeatInterval'];
 const SEL = ['minSeverity', 'soundSev5', 'soundSev4', 'soundSev3', 'soundSev2', 'soundSev1'];
 const CHK = ['soundEnabled', 'notificationsEnabled', 'notifyResolved', 'badgeUnseen', 'repeatAlarm', 'nagNotify', 'ignoreAckd', 'ignoreSuppressed', 'ignoreMaintenance'];
@@ -65,7 +65,7 @@ function renderInstances(instances) {
   const container = document.getElementById('instancesContainer');
   container.innerHTML = '';
   if (!instances || !instances.length) {
-    container.innerHTML = `<div class="inst-empty-state"><div class="inst-empty-icon">\u{1F5A5}\u{FE0F}</div><div>${esc(t('inst_empty', currentLang))}</div></div>`;
+    container.innerHTML = `<div class="inst-empty-state">${esc(t('inst_empty', currentLang))}</div>`;
   } else {
     instances.forEach((inst, idx) => {
       const card = createInstanceCard(inst, idx);
