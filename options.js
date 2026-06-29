@@ -65,54 +65,73 @@ function renderInstances(instances) {
   const container = document.getElementById('instancesContainer');
   container.innerHTML = '';
   if (!instances || !instances.length) {
-    container.innerHTML = `<div class="desc" style="text-align:center;padding:12px;">${esc(t('inst_empty', currentLang))}</div>`;
+    container.innerHTML = `<div class="inst-empty-state"><div class="inst-empty-icon">\u{1F5A5}\u{FE0F}</div><div>${esc(t('inst_empty', currentLang))}</div></div>`;
   } else {
-    instances.forEach((inst, idx) => container.appendChild(createInstanceCard(inst, idx)));
+    instances.forEach((inst, idx) => {
+      const card = createInstanceCard(inst, idx);
+      // com mais de uma instancia ja configurada, comeca recolhido pra nao poluir (clique no cabecalho expande)
+      if (instances.length > 1 && (inst.url || '').trim()) card.classList.add('collapsed');
+      container.appendChild(card);
+    });
   }
-  // esconder botao de adicionar se ja tem 4
+  // esconder botao de adicionar se ja atingiu o teto
   const addBtn = document.getElementById('addInstanceBtn');
   addBtn.style.display = (instances || []).length >= MAX_INSTANCES ? 'none' : '';
+}
+
+// titulo do cabecalho do card: o rotulo, ou "Rotulo N" quando vazio
+function instCardTitle(card) {
+  return t('inst_label', currentLang) + ' ' + (Number(card.dataset.idx) + 1);
 }
 
 function createInstanceCard(inst, idx) {
   const card = document.createElement('div');
   card.className = 'inst-card' + (inst.enabled ? '' : ' disabled');
   card.dataset.idx = idx;
+  const hasLabel = (inst.label || '').trim();
   card.innerHTML = `
     <div class="inst-header">
+      <button type="button" class="inst-toggle" data-i18n-title="inst_toggle" data-i18n-aria="inst_toggle" title="${esc(t('inst_toggle', currentLang))}">&#x25BE;</button>
       <span class="inst-num">#${idx + 1}</span>
-      <label class="check" style="margin:0;font-size:11px;">
+      <span class="inst-title${hasLabel ? '' : ' empty'}">${esc(hasLabel || (t('inst_label', currentLang) + ' ' + (idx + 1)))}</span>
+      <label class="check inst-enabled-wrap">
         <input type="checkbox" class="inst-enabled" ${inst.enabled ? 'checked' : ''}>
         <span>${esc(t('inst_enabled', currentLang))}</span>
       </label>
     </div>
-    <div class="inst-row">
-      <div class="field">
+    <div class="inst-body">
+      <div class="inst-field">
         <label>${esc(t('inst_label', currentLang))}</label>
         <input type="text" class="inst-label-input" value="${esc(inst.label || '')}" placeholder="${esc(t('inst_label_ph', currentLang))}" maxlength="20">
       </div>
-    </div>
-    <div class="inst-row">
-      <div class="field" style="flex:2;">
+      <div class="inst-field">
         <label>${esc(t('inst_url', currentLang))}</label>
         <input type="text" class="inst-url" value="${esc(inst.url || '')}" placeholder="https://zabbix.empresa.com" autocomplete="off">
       </div>
-    </div>
-    <div class="inst-row">
-      <div class="field" style="flex:2;">
+      <div class="inst-field">
         <label>${esc(t('inst_token', currentLang))}</label>
         <input type="password" class="inst-token" value="${esc(inst.token || '')}" placeholder="${esc(t('token_ph', currentLang))}" autocomplete="off">
       </div>
-    </div>
-    <div class="inst-actions">
-      <button class="btn-mini inst-test-btn">${esc(t('inst_test', currentLang))}</button>
-      <span class="inst-status" style="font-size:10px;"></span>
-      <button class="btn-mini inst-remove-btn" style="margin-left:auto;color:#ff8a8a;">${esc(t('inst_remove', currentLang))}</button>
+      <div class="inst-actions">
+        <button class="btn-test inst-test-btn">${esc(t('inst_test', currentLang))}</button>
+        <span class="inst-status"></span>
+        <button class="btn-danger inst-remove-btn">${esc(t('inst_remove', currentLang))}</button>
+      </div>
     </div>`;
 
-  // eventos
+  const titleEl = card.querySelector('.inst-title');
+  // colapsar/expandir clicando no cabecalho (menos nos controles de ativar)
+  card.querySelector('.inst-header').addEventListener('click', () => card.classList.toggle('collapsed'));
+  // o toggle de "ativa" nao deve disparar o colapso
+  card.querySelector('.inst-enabled-wrap').addEventListener('click', (e) => e.stopPropagation());
   card.querySelector('.inst-enabled').addEventListener('change', (e) => {
     card.classList.toggle('disabled', !e.target.checked);
+  });
+  // o titulo do cabecalho acompanha o rotulo digitado
+  card.querySelector('.inst-label-input').addEventListener('input', (e) => {
+    const v = e.target.value.trim();
+    titleEl.textContent = v || instCardTitle(card);
+    titleEl.classList.toggle('empty', !v);
   });
   card.querySelector('.inst-test-btn').addEventListener('click', () => testInstance(card));
   card.querySelector('.inst-remove-btn').addEventListener('click', () => removeInstance(card));
@@ -121,22 +140,28 @@ function createInstanceCard(inst, idx) {
 
 function addInstance() {
   const container = document.getElementById('instancesContainer');
+  const empty = container.querySelector('.inst-empty-state');
+  if (empty) empty.remove(); // tira o placeholder de "nenhuma instancia"
   const current = container.querySelectorAll('.inst-card').length;
   if (current >= MAX_INSTANCES) return;
   const idx = current;
   const inst = { id: 'inst' + (Date.now() % 100000), label: '', url: '', token: '', enabled: true };
-  container.appendChild(createInstanceCard(inst, idx));
+  container.appendChild(createInstanceCard(inst, idx)); // novo card ja vem expandido
   // atualizar visibilidade do botao
   document.getElementById('addInstanceBtn').style.display = (idx + 1) >= MAX_INSTANCES ? 'none' : '';
 }
 
 function removeInstance(card) {
   card.remove();
-  // re-numerar
   const container = document.getElementById('instancesContainer');
-  container.querySelectorAll('.inst-card').forEach((c, i) => {
+  const cards = container.querySelectorAll('.inst-card');
+  if (!cards.length) { renderInstances([]); return; } // voltou a zero -> mostra o placeholder
+  // re-numerar (e atualizar o titulo dos que estao sem rotulo)
+  cards.forEach((c, i) => {
     c.dataset.idx = i;
     c.querySelector('.inst-num').textContent = '#' + (i + 1);
+    const titleEl = c.querySelector('.inst-title');
+    if (titleEl.classList.contains('empty')) titleEl.textContent = instCardTitle(c);
   });
   document.getElementById('addInstanceBtn').style.display = '';
 }

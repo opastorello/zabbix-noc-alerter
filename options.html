@@ -46,15 +46,30 @@
     .alert.error { background:var(--accent-dim); color:#ff8a8a; display:block; }
     footer { text-align:center; padding:14px 0 2px; font-size:10px; color:#666; border-top:1px solid var(--border); margin-top:20px; }
     footer a { color:var(--accent); text-decoration:none; font-weight:600; }
-    .inst-card { background:var(--bg); border:1px solid var(--border); border-radius:6px; padding:10px 12px; margin-bottom:8px; position:relative; }
-    .inst-card.disabled { opacity:0.5; }
-    .inst-header { display:flex; align-items:center; gap:8px; margin-bottom:8px; }
-    .inst-header .inst-num { font-size:10px; font-weight:700; color:var(--accent); background:var(--accent-dim); padding:2px 6px; border-radius:4px; }
-    .inst-header .inst-status { font-size:10px; margin-left:auto; }
-    .inst-row { display:flex; gap:8px; margin-bottom:6px; }
-    .inst-row .field { flex:1; margin-bottom:0; }
-    .inst-actions { display:flex; gap:6px; align-items:center; margin-top:6px; }
-    .inst-actions .btn-mini { padding:5px 10px; }
+    /* ----- Instancias (cards colapsaveis) ----- */
+    .inst-card { background:var(--bg); border:1px solid var(--border); border-radius:8px; margin-bottom:10px; overflow:hidden; transition:border-color .15s; }
+    .inst-card:hover { border-color:#3a4150; }
+    .inst-card.disabled { opacity:0.55; }
+    .inst-header { display:flex; align-items:center; gap:10px; padding:10px 12px; cursor:pointer; user-select:none; }
+    .inst-toggle { background:none; border:none; color:var(--text-dim); cursor:pointer; font-size:11px; padding:0; line-height:1; transition:transform .15s; flex-shrink:0; }
+    .inst-card.collapsed .inst-toggle { transform:rotate(-90deg); }
+    .inst-num { font-size:10px; font-weight:700; color:var(--accent); background:var(--accent-dim); padding:2px 7px; border-radius:10px; flex-shrink:0; }
+    .inst-title { flex:1; font-weight:600; font-size:13px; color:var(--text); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .inst-title.empty { color:var(--text-dim); font-weight:400; font-style:italic; }
+    .inst-enabled-wrap { margin:0; padding:0; flex-shrink:0; font-size:11px; color:var(--text-dim); }
+    .inst-body { padding:2px 12px 12px; border-top:1px solid var(--border); }
+    .inst-card.collapsed .inst-body { display:none; }
+    .inst-field { margin-top:10px; }
+    .inst-actions { display:flex; gap:8px; align-items:center; margin-top:14px; }
+    .inst-actions button { padding:6px 12px; font-size:11px; }
+    .inst-status { flex:1; font-size:11px; }
+    .btn-danger { background:transparent; color:#ff8a8a; border:1px solid #5a2a2a; }
+    .btn-danger:hover { background:var(--accent-dim); filter:none; }
+    .inst-add-btn { width:100%; padding:11px; background:transparent; border:1px dashed var(--border); border-radius:8px; color:var(--text-dim); font-weight:600; transition:.15s; }
+    .inst-add-btn::before { content:'+ '; font-weight:700; }
+    .inst-add-btn:hover { border-color:var(--accent); color:var(--accent); filter:none; background:rgba(228,89,89,0.06); }
+    .inst-empty-state { text-align:center; padding:26px 14px; border:1px dashed var(--border); border-radius:8px; color:var(--text-dim); font-size:12px; }
+    .inst-empty-state .inst-empty-icon { font-size:26px; margin-bottom:8px; opacity:0.55; }
   </style>
 </head>
 <body>
@@ -75,7 +90,7 @@
     <div class="section-body">
       <div class="desc" style="margin-bottom:10px;" data-i18n="inst_desc">Configure até 4 instâncias independentes. Cada uma pode usar sessão do navegador ou token.</div>
       <div id="instancesContainer"></div>
-      <button id="addInstanceBtn" class="btn-test" style="margin-top:8px;" data-i18n="inst_add">Adicionar instância</button>
+      <button id="addInstanceBtn" class="inst-add-btn" style="margin-top:8px;"><span data-i18n="inst_add">Adicionar instância</span></button>
     </div>
   </div>
 
