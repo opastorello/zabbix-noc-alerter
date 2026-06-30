@@ -7,12 +7,23 @@ in `manifest.json`.
 
 ## [Unreleased]
 
+## [0.3.0]
+
 ### Added
+- Multi-instance: watch up to 8 independent Zabbix instances at once, each with its own URL and an optional API token. The popup badges every problem with its instance, and acknowledge/snooze route to the correct one. Community contribution by @GoianoMarques.
+- Per-instance host group filter: name the Zabbix host groups to watch; the extension resolves them to `groupids` and filters server-side (empty = all groups).
+- Group the popup list by host or by instance, with collapsible group headers; composes with the text filter, the severity filter and the sort.
 - Snooze a single problem (15 min to 4 h) without the global mute; it re-alerts when the snooze ends.
 - Filter the popup list by clicking a severity stat (DIS/HIGH/AVG/WARN/INFO); composes with the text filter.
 - Sort the popup list by severity (default), age (oldest first) or host.
-- Export and import settings as a JSON file (the API token is never exported, and never overwritten on import).
+- Export and import settings as a JSON file (instance tokens are never exported, and never overwritten on import).
 - Option to toggle the re-alarm notification ("re-notify on re-alarm").
+
+### Changed
+- Options: each Zabbix instance is a collapsible card (collapsed when you open the page) for a cleaner view as you add more.
+
+### Internal
+- Dependency-free node test suite (pure functions plus multi-instance poll scenarios) and a JS-syntax lint, run on every push and pull request in CI.
 
 ## [0.2.0]
 

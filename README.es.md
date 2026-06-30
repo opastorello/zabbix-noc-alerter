@@ -30,30 +30,32 @@ notificación, en tu navegador, mientras trabajas en cualquier otra cosa.
 
 ## Funciones
 
+- 🛰️ **Multi-instancia:** monitorea hasta 8 servidores Zabbix independientes a la vez, cada uno con su URL y token opcional; cada problema muestra una etiqueta de su instancia.
 - 🔊 **Sonido por severidad** con volumen y botón de prueba.
 - 🔁 **Re-alarma** (sonido y notificación) mientras haya un problema no reconocido, hasta dar ack o silencio.
 - 🛠️ **Consciente de mantenimiento:** los problemas en ventana de mantenimiento reciben la etiqueta MNT y quedan en silencio (o los ocultas).
-- 🔍 **Filtro en vivo** en el popup por host o nombre del problema, o haciendo clic en una severidad.
+- 🔍 **Filtro en vivo** en el popup por host o nombre del problema, o haciendo clic en una severidad; **ordenar** y **agrupar por host o instancia**.
 - 💤 **Posponer (snooze) un solo problema** (15 min a 4 h) sin el silencio global; al terminar, vuelve a avisar.
-- 🖥️ **Muestra el host** en la lista y en la notificación.
+- 🖥️ **Muestra el host** (y la instancia, cuando monitoreas más de una) en la lista y en la notificación.
 - ✅ **Ack desde el popup** (con mensaje) y muestra el ack existente.
 - 🟢 **Notificación de resuelto** cuando un problema se recupera.
 - 🖱️ **Clic en el problema** abre el evento exacto en Zabbix.
-- 🔎 **Filtros:** severidad mínima, edad máxima, excluir por texto, ocultar suprimidos/reconocidos/en mantenimiento; badge "no vistos" opcional.
+- 🔎 **Filtros:** severidad mínima, edad máxima, **grupos de hosts**, excluir por texto, ocultar suprimidos/reconocidos/en mantenimiento; badge "no vistos" opcional.
+- 💾 **Backup:** exportar e importar la configuración en JSON (los tokens de las instancias nunca se exportan).
 - 🌐 **Idiomas:** English, Português, Español, elegido automáticamente por el navegador.
-- 🔒 **Nada fijo en código:** la URL de Zabbix (y un token opcional) viven solo en las opciones.
+- 🔒 **Nada fijo en código:** las URLs de Zabbix (y los tokens opcionales) viven solo en las opciones.
 
 ## Instalación
 
 ### Desde la Chrome Web Store (recomendado)
 
-[**Instalar Zabbix NOC Alerter**](https://chromewebstore.google.com/detail/zabbix-noc-alerter/nlbihmhpbdfhnglclecbaebnfpjbngep) - un clic, con actualizaciones automáticas. Luego abre las **opciones** de la extensión, pon la URL de tu Zabbix y mantén una pestaña de Zabbix con sesión iniciada. Eso es todo.
+[**Instalar Zabbix NOC Alerter**](https://chromewebstore.google.com/detail/zabbix-noc-alerter/nlbihmhpbdfhnglclecbaebnfpjbngep) - un clic, con actualizaciones automáticas. Luego abre las **opciones** de la extensión, agrega una instancia de Zabbix y mantén una pestaña de Zabbix con sesión iniciada. Eso es todo.
 
 ### Desde el código (unpacked)
 
 1. Descarga el [release](https://github.com/opastorello/zabbix-noc-alerter/releases/latest) más reciente y descomprímelo (o clona este repositorio).
 2. Abre `chrome://extensions`, activa el **Developer mode**, pulsa **Load unpacked** y elige la carpeta.
-3. Abre las **opciones** de la extensión y pon la URL de tu Zabbix.
+3. Abre las **opciones** de la extensión y agrega una instancia de Zabbix (URL, token opcional).
 4. Mantén una pestaña de Zabbix con sesión iniciada. Eso es todo.
 
 ## Cómo funciona

@@ -35,22 +35,22 @@
           <button class="icon-btn"><span>&#x21bb;</span></button><button class="icon-btn"><span>&#x2699;</span></button>
         </div>
       </header>
-      <div class="status-bar ok">7 activos (sesión) - ahora</div>
+      <div class="status-bar ok">7 activos (2/2 OK) - ahora</div>
       <div class="stats-row">
         <div class="stat dis"><span>1</span>DIS</div><div class="stat high"><span>2</span>HIGH</div>
         <div class="stat avg"><span>2</span>AVG</div><div class="stat warn"><span>2</span>WARN</div><div class="stat info"><span>0</span>INFO</div>
       </div>
       <input class="filter-box" placeholder="Filtrar host o problema" value="">
       <div class="list">
-        <div class="row dis"><span class="badge dis">DIS</span><div class="txt"><div class="host">db-primary-01</div><div class="name">Sin respuesta al ping ICMP</div></div><div class="meta"><button class="snzbtn">SNZ</button><button class="ackbtn">ACK</button><span class="age">3m</span></div></div>
-        <div class="row high"><span class="badge high">HIGH</span><div class="txt"><div class="host">web-prod-02</div><div class="name">Uso de CPU alto (más de 90% por 5m)</div></div><div class="meta"><button class="snzbtn">SNZ</button><button class="ackbtn">ACK</button><span class="age">8m</span></div></div>
-        <div class="row high is-ack"><span class="badge high">HIGH</span><div class="txt"><div class="host">k8s-node-07</div><div class="name">Espacio libre en disco por debajo de 5% en /var</div><div class="ackinfo">&#x2713; Limpiando logs, escalando el pool de nodos</div></div><div class="meta"><span class="tag ackd">&#x2713; ACK</span><span class="age">21m</span></div></div>
-        <div class="row avg"><span class="badge avg">AVG</span><div class="txt"><div class="host">cache-redis-03</div><div class="name">Uso de memoria alto (87%)</div></div><div class="meta"><button class="snzbtn">SNZ</button><button class="ackbtn">ACK</button><span class="age">1h</span></div></div>
-        <div class="row avg is-ack"><span class="badge avg">AVG</span><div class="txt"><div class="host">edge-router-fra</div><div class="name">Interfaz eth1: enlace caído</div></div><div class="meta"><span class="tag ackd">&#x2713; ACK</span><span class="age">2h</span></div></div>
-        <div class="row warn"><span class="badge warn">WARN</span><div class="txt"><div class="host">mail-gateway-01</div><div class="name">Certificado SSL expira en 6 días</div></div><div class="meta"><span class="tag">SUP</span><button class="snzbtn">SNZ</button><button class="ackbtn">ACK</button><span class="age">1d</span></div></div>
-        <div class="row warn"><span class="badge warn">WARN</span><div class="txt"><div class="host">backup-nas-02</div><div class="name">Agente Zabbix no disponible</div></div><div class="meta"><span class="tag mnt" title="En mantenimiento">MNT</span><span class="age">2d</span></div></div>
+        <div class="row dis"><span class="badge dis">DIS</span><div class="txt"><div class="host"><span class="inst-badge">PRD</span>db-primary-01</div><div class="name">Sin respuesta al ping ICMP</div></div><div class="meta"><button class="snzbtn">SNZ</button><button class="ackbtn">ACK</button><span class="age">3m</span></div></div>
+        <div class="row high"><span class="badge high">HIGH</span><div class="txt"><div class="host"><span class="inst-badge">PRD</span>web-prod-02</div><div class="name">Uso de CPU alto (más de 90% por 5m)</div></div><div class="meta"><button class="snzbtn">SNZ</button><button class="ackbtn">ACK</button><span class="age">8m</span></div></div>
+        <div class="row high is-ack"><span class="badge high">HIGH</span><div class="txt"><div class="host"><span class="inst-badge">HML</span>k8s-node-07</div><div class="name">Espacio libre en disco por debajo de 5% en /var</div><div class="ackinfo">&#x2713; Limpiando logs, escalando el pool de nodos</div></div><div class="meta"><span class="tag ackd">&#x2713; ACK</span><span class="age">21m</span></div></div>
+        <div class="row avg"><span class="badge avg">AVG</span><div class="txt"><div class="host"><span class="inst-badge">PRD</span>cache-redis-03</div><div class="name">Uso de memoria alto (87%)</div></div><div class="meta"><button class="snzbtn">SNZ</button><button class="ackbtn">ACK</button><span class="age">1h</span></div></div>
+        <div class="row avg is-ack"><span class="badge avg">AVG</span><div class="txt"><div class="host"><span class="inst-badge">HML</span>edge-router-fra</div><div class="name">Interfaz eth1: enlace caído</div></div><div class="meta"><span class="tag ackd">&#x2713; ACK</span><span class="age">2h</span></div></div>
+        <div class="row warn"><span class="badge warn">WARN</span><div class="txt"><div class="host"><span class="inst-badge">HML</span>mail-gateway-01</div><div class="name">Certificado SSL expira en 6 días</div></div><div class="meta"><span class="tag">SUP</span><button class="snzbtn">SNZ</button><button class="ackbtn">ACK</button><span class="age">1d</span></div></div>
+        <div class="row warn"><span class="badge warn">WARN</span><div class="txt"><div class="host"><span class="inst-badge">PRD</span>backup-nas-02</div><div class="name">Agente Zabbix no disponible</div></div><div class="meta"><span class="tag mnt" title="En mantenimiento">MNT</span><span class="age">2d</span></div></div>
       </div>
-      <footer><div class="credit">Zabbix NOC Alerter v0.2.0 - @opastorello</div></footer>
+      <footer><div class="credit">Zabbix NOC Alerter v0.3.0 - @opastorello</div></footer>
     </div></div>
   </div>
 </div>

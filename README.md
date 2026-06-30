@@ -30,30 +30,32 @@ right in your browser, while you work on anything else.
 
 ## Features
 
+- 🛰️ **Multi-instance:** watch up to 8 independent Zabbix servers at once, each with its own URL and optional token; every problem is badged with its instance.
 - 🔊 **Per-severity sound** with volume and a test button.
 - 🔁 **Re-alarm** (sound and notification) while a problem is unacknowledged, until you ack it or mute.
 - 🛠️ **Maintenance-aware:** problems in a maintenance window get an MNT tag and stay silent (or hide them).
-- 🔍 **Live filter** in the popup by host or problem name, or by clicking a severity.
+- 🔍 **Live filter** in the popup by host or problem name, or by clicking a severity; **sort** and **group by host or instance**.
 - 💤 **Snooze a single problem** (15 min to 4 h) without the global mute; it re-alerts when the snooze ends.
-- 🖥️ **Shows the host** in the list and in the notification.
+- 🖥️ **Shows the host** (and the instance, when you watch more than one) in the list and in the notification.
 - ✅ **Acknowledge from the popup** (with a message), and see any existing ack.
 - 🟢 **Resolved notification** when a problem recovers.
 - 🖱️ **Click a problem** to open the exact event in Zabbix.
-- 🔎 **Filters:** minimum severity, max age, exclude by text, hide suppressed/acked/in-maintenance; optional "unseen" badge.
+- 🔎 **Filters:** minimum severity, max age, **host groups**, exclude by text, hide suppressed/acked/in-maintenance; optional "unseen" badge.
+- 💾 **Backup:** export and import settings as JSON (instance tokens are never exported).
 - 🌐 **Languages:** English, Português, Español, picked automatically from your browser.
-- 🔒 **Nothing hardcoded:** the Zabbix URL (and an optional token) live only in the options.
+- 🔒 **Nothing hardcoded:** the Zabbix URLs (and optional tokens) live only in the options.
 
 ## Install
 
 ### From the Chrome Web Store (recommended)
 
-[**Install Zabbix NOC Alerter**](https://chromewebstore.google.com/detail/zabbix-noc-alerter/nlbihmhpbdfhnglclecbaebnfpjbngep) - one click, with automatic updates. Then open the extension **options**, set your Zabbix URL, and keep a Zabbix tab logged in. That is all.
+[**Install Zabbix NOC Alerter**](https://chromewebstore.google.com/detail/zabbix-noc-alerter/nlbihmhpbdfhnglclecbaebnfpjbngep) - one click, with automatic updates. Then open the extension **options**, add a Zabbix instance, and keep a Zabbix tab logged in. That is all.
 
 ### From source (unpacked)
 
 1. Download the latest [release](https://github.com/opastorello/zabbix-noc-alerter/releases/latest) and unzip it (or clone this repo).
 2. Open `chrome://extensions`, turn on **Developer mode**, click **Load unpacked** and pick the folder.
-3. Open the extension **options** and set your Zabbix URL.
+3. Open the extension **options** and add a Zabbix instance (URL, optional token).
 4. Keep a Zabbix tab logged in. That is all.
 
 ## How it works
