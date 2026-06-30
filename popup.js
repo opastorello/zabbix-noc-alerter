@@ -29,6 +29,7 @@ document.addEventListener('DOMContentLoaded', () => {
     applyFilter();
   }));
   document.getElementById('sortBy').addEventListener('change', applyFilter);
+  document.getElementById('groupBy').addEventListener('change', applyFilter);
   load();
 });
 
@@ -101,7 +102,7 @@ function applyFilter() {
     sortBy === 'host' ? ((a.host || '').localeCompare(b.host || '') || Number(b.severity) - Number(a.severity))
     : sortBy === 'age' ? (Number(a.clock) - Number(b.clock))
     : (Number(b.severity) - Number(a.severity) || Number(b.clock) - Number(a.clock)));
-  renderList(list, !!term || sevFilter !== null);
+  renderList(list, !!term || sevFilter !== null, document.getElementById('groupBy').value);
 }
 
 function buildInstInfo(instStatus) {
@@ -132,7 +133,7 @@ function setCounts(bySev) {
   document.getElementById('cInfo').textContent = (bySev[1] || 0) + (bySev[0] || 0);
 }
 
-function renderList(problems, filtered) {
+function renderList(problems, filtered, groupBy) {
   const el = document.getElementById('list');
   if (!problems.length) {
     el.innerHTML = '<div class="empty">' + (filtered ? esc(t('no_match', lang)) : esc(t('none', lang)) + ' 🟢') + '</div>';
@@ -140,7 +141,7 @@ function renderList(problems, filtered) {
   }
   // detectar se multi-instance (para mostrar o badge da instancia em cada linha)
   const multiInst = new Set(problems.map(p => p.instId)).size > 1;
-  el.innerHTML = problems.map(p => {
+  const rowHtml = (p) => {
     const [lbl, cls] = SEV[p.severity] || ['?', 'info'];
     const snoozed = p.snoozedUntil && p.snoozedUntil > Date.now();
     const instBadge = (multiInst && p.instLabel) ? `<span class="inst-badge">${esc(p.instLabel)}</span>` : '';
@@ -160,7 +161,34 @@ function renderList(problems, filtered) {
       </div>
       <div class="meta">${tags}${snzBtn}${ackBtn}<span class="age">${ago(p.clock * 1000)}</span></div>
     </div>`;
-  }).join('');
+  };
+
+  if (groupBy === 'host' || groupBy === 'instance') {
+    // agrupa preservando a ordem (ja filtrada/ordenada) dentro de cada grupo
+    const groups = new Map();
+    for (const p of problems) {
+      const key = groupBy === 'instance' ? (p.instId || '') : (p.host || '');
+      const label = groupBy === 'instance' ? (p.instLabel || '?') : (p.host || t('no_host', lang));
+      if (!groups.has(key)) groups.set(key, { label, items: [] });
+      groups.get(key).items.push(p);
+    }
+    const maxSev = (items) => items.reduce((m, p) => Math.max(m, Number(p.severity)), 0);
+    const ordered = [...groups.values()].sort((a, b) => maxSev(b.items) - maxSev(a.items)); // grupo mais severo no topo
+    el.innerHTML = ordered.map(g => {
+      const [, gcls] = SEV[maxSev(g.items)] || ['?', 'info'];
+      return `<div class="grp">
+        <div class="grp-head ${gcls}" role="button" tabindex="0" title="${t('grp_toggle', lang)}"><span class="grp-caret">&#x25BE;</span><span class="grp-name" title="${esc(g.label)}">${esc(g.label)}</span><span class="grp-count">${g.items.length}</span></div>
+        <div class="grp-body">${g.items.map(rowHtml).join('')}</div>
+      </div>`;
+    }).join('');
+    el.querySelectorAll('.grp-head').forEach(h => {
+      const toggle = () => h.parentElement.classList.toggle('collapsed');
+      h.addEventListener('click', toggle);
+      h.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(); } });
+    });
+  } else {
+    el.innerHTML = problems.map(rowHtml).join('');
+  }
 
   el.querySelectorAll('.ackbtn').forEach(btn => {
     btn.addEventListener('click', (e) => {
