@@ -6,3 +6,6 @@ assets export-ignore
 assets/** export-ignore
 screenshots export-ignore
 screenshots/** export-ignore
+test export-ignore
+test/** export-ignore
+package.json export-ignore

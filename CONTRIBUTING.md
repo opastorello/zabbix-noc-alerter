@@ -30,6 +30,18 @@ If you change the popup or options UI, update the matching mockup in
 1280x800 viewport and capture it). See `screenshots/README.md` for details.
 The same images are reused in the READMEs and the Chrome Web Store listing.
 
+## Tests
+
+Pure functions and the multi-instance poll logic have node-based tests (no
+framework, no dependencies, no install):
+
+- `npm test` runs the suite (`test/run.js`): pure functions (`problemUrl`,
+  `migrateConfig`, `normalizeUrl`, `inMaintenance`, filters) plus poll scenarios
+  driven against a mocked Zabbix (multi-instance aggregation, composite
+  `instId:eventid` keys, snooze, maintenance, resolved, disabled instance).
+- `npm run lint` checks the syntax of every source `.js` (`test/lint.js`).
+- `npm run check` runs both. CI runs them on every push and pull request.
+
 ## House rules (please keep these)
 
 These keep the project simple, private and portable:

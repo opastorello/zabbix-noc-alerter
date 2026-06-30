@@ -1,0 +1,10 @@
+{
+  "name": "zabbix-noc-alerter",
+  "private": true,
+  "description": "Tests and lint for the Zabbix NOC Alerter browser extension. Dependency-free: the extension itself has no build step; this only powers `npm test`/`npm run lint`. Version of record lives in manifest.json.",
+  "scripts": {
+    "test": "node test/run.js",
+    "lint": "node test/lint.js",
+    "check": "node test/lint.js && node test/run.js"
+  }
+}
