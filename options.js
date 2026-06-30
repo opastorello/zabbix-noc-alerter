@@ -111,6 +111,11 @@ function createInstanceCard(inst, idx) {
         <label>${esc(t('inst_token', currentLang))}</label>
         <input type="password" class="inst-token" value="${esc(inst.token || '')}" placeholder="${esc(t('token_ph', currentLang))}" autocomplete="off">
       </div>
+      <div class="inst-field">
+        <label>${esc(t('inst_groups', currentLang))}</label>
+        <input type="text" class="inst-groups" value="${esc(inst.hostGroups || '')}" placeholder="${esc(t('inst_groups_ph', currentLang))}" autocomplete="off">
+        <div class="desc">${esc(t('inst_groups_desc', currentLang))}</div>
+      </div>
       <div class="inst-actions">
         <button class="btn-test inst-test-btn">${esc(t('inst_test', currentLang))}</button>
         <span class="inst-status"></span>
@@ -196,6 +201,7 @@ function collectInstances() {
       label: card.querySelector('.inst-label-input').value.trim() || ('Zabbix ' + (idx + 1)),
       url: card.querySelector('.inst-url').value.trim(),
       token: card.querySelector('.inst-token').value.trim(),
+      hostGroups: card.querySelector('.inst-groups').value.trim(),
       enabled: card.querySelector('.inst-enabled').checked
     });
   });

@@ -46,7 +46,8 @@ const I18N = {
     inst_url: 'URL do Zabbix', inst_token: 'Token de API (opcional)',
     inst_enabled: 'Ativa', inst_add: 'Adicionar instância', inst_remove: 'Remover',
     inst_section: 'Instâncias do Zabbix', inst_desc: 'Configure até 8 instâncias independentes. Cada uma pode usar sessão do navegador ou token.',
-    inst_test: 'Testar', inst_empty: 'Nenhuma instância configurada.', inst_toggle: 'Expandir / recolher'
+    inst_test: 'Testar', inst_empty: 'Nenhuma instância configurada.', inst_toggle: 'Expandir / recolher',
+    inst_groups: 'Host groups (opcional)', inst_groups_ph: 'Ex.: Linux servers, Rede', inst_groups_desc: 'Vazio = todos. Filtra no servidor por groupids; nomes exatos, separados por vírgula.'
   },
   en: {
     conn: 'Connection', zurl: 'Zabbix URL', zurl_ph: 'https://zabbix.yourcompany.com',
@@ -90,7 +91,8 @@ const I18N = {
     inst_url: 'Zabbix URL', inst_token: 'API token (optional)',
     inst_enabled: 'Enabled', inst_add: 'Add instance', inst_remove: 'Remove',
     inst_section: 'Zabbix Instances', inst_desc: 'Configure up to 8 independent instances. Each can use browser session or token.',
-    inst_test: 'Test', inst_empty: 'No instances configured.', inst_toggle: 'Expand / collapse'
+    inst_test: 'Test', inst_empty: 'No instances configured.', inst_toggle: 'Expand / collapse',
+    inst_groups: 'Host groups (optional)', inst_groups_ph: 'E.g.: Linux servers, Network', inst_groups_desc: 'Empty = all. Filters on the server by groupids; exact names, comma-separated.'
   },
   es: {
     conn: 'Conexión', zurl: 'URL de Zabbix', zurl_ph: 'https://zabbix.tuempresa.com',
@@ -134,7 +136,8 @@ const I18N = {
     inst_url: 'URL de Zabbix', inst_token: 'Token de API (opcional)',
     inst_enabled: 'Activa', inst_add: 'Agregar instancia', inst_remove: 'Eliminar',
     inst_section: 'Instancias de Zabbix', inst_desc: 'Configure hasta 8 instancias independientes. Cada una puede usar sesión del navegador o token.',
-    inst_test: 'Probar', inst_empty: 'Sin instancias configuradas.', inst_toggle: 'Expandir / contraer'
+    inst_test: 'Probar', inst_empty: 'Sin instancias configuradas.', inst_toggle: 'Expandir / contraer',
+    inst_groups: 'Grupos de hosts (opcional)', inst_groups_ph: 'Ej.: Linux servers, Red', inst_groups_desc: 'Vacío = todos. Filtra en el servidor por groupids; nombres exactos, separados por coma.'
   }
 };
 

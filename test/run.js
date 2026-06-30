@@ -20,7 +20,7 @@ let captured = { sounds: [], notifs: [], cleared: [], badge: null };
 function resetCaptures() { captured = { sounds: [], notifs: [], cleared: [], badge: null }; }
 
 // ---------- cenario do Zabbix (controlado por teste) ----------
-let scenario = { byBase: {}, version: '6.0.4' };
+let scenario = { byBase: {}, version: '6.0.4', groups: {}, lastProblemGet: {} };
 
 // ---------- mock chrome ----------
 const storageLocal = {}, storageSession = {};
@@ -59,7 +59,8 @@ async function fetchMock(url, opts) {
   const body = JSON.parse(opts.body);
   let result;
   if (body.method === 'apiinfo.version') result = scenario.version;
-  else if (body.method === 'problem.get') result = (scenario.byBase[base] || []).map(p => ({ ...p }));
+  else if (body.method === 'problem.get') { scenario.lastProblemGet[base] = body.params; result = (scenario.byBase[base] || []).map(p => ({ ...p })); }
+  else if (body.method === 'hostgroup.get') { const want = (body.params.filter && body.params.filter.name) || []; result = (scenario.groups[base] || []).filter(g => want.includes(g.name)).map(g => ({ groupid: g.groupid })); }
   else if (body.method === 'trigger.get') result = ((body.params && body.params.triggerids) || []).map(id => ({ triggerid: id, hosts: [{ hostid: 'h' + id, name: 'host-' + id }] }));
   else if (body.method === 'event.acknowledge') result = { eventids: body.params.eventids };
   else result = [];
@@ -183,6 +184,16 @@ function P(ev, sev, x = {}) { return { eventid: String(ev), objectid: 't' + ev, 
   ], minSeverity: 0, repeatAlarm: false });
   eq(knownKeys(), ['inst1:400'], 'instancia desabilitada some da agregacao');
   assert(BG.getState().instStatus.inst2 === undefined, 'instStatus de instancia desabilitada e limpo (sem fantasma)');
+
+  console.log('\n--- Integracao: filtro por host group ---');
+  scenario.groups = { 'https://z1': [{ name: 'Linux servers', groupid: '11' }, { name: 'Rede', groupid: '22' }, { name: 'Outro', groupid: '33' }] };
+  scenario.lastProblemGet = {};
+  scenario.byBase = { 'https://z1': [P(700, 5)] };
+  await setConfig({ instances: [{ id: 'inst1', label: 'PRD', url: 'https://z1', token: 't1', enabled: true, hostGroups: 'Linux servers, Rede' }], minSeverity: 0, repeatAlarm: false });
+  eq((scenario.lastProblemGet['https://z1'] || {}).groupids, ['11', '22'], 'host groups resolvidos viram groupids no problem.get');
+  scenario.lastProblemGet = {};
+  await setConfig({ instances: [{ id: 'inst1', label: 'PRD', url: 'https://z1', token: 't1', enabled: true, hostGroups: '' }], minSeverity: 0, repeatAlarm: false });
+  assert(!('groupids' in (scenario.lastProblemGet['https://z1'] || {})), 'sem host groups: problem.get nao envia groupids (observa todos)');
 
   // =================================================================
   console.log('\n' + '='.repeat(44));

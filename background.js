@@ -5,7 +5,7 @@
 
 importScripts('i18n.js'); // traducoes (I18N, t, resolveLang) tambem no service worker
 
-const DEFAULT_INSTANCE = { id: '', label: '', url: '', token: '', enabled: true };
+const DEFAULT_INSTANCE = { id: '', label: '', url: '', token: '', enabled: true, hostGroups: '' };
 const MAX_INSTANCES = 8;
 
 const DEFAULT_CONFIG = {
@@ -52,6 +52,25 @@ function enabledInstances(cfg) {
   return (cfg.instances || []).filter(i => i.enabled && i.url && i.url.trim());
 }
 
+// Resolve os nomes de host group de uma instancia para groupids, cacheado por instId+nomes.
+// Vazio = sem filtro (observa todos os grupos). Nomes inexistentes sao ignorados (fail-open).
+async function resolveGroupIds(base, token, inst) {
+  const names = (inst.hostGroups || '').split(/[\n,]/).map(s => s.trim()).filter(Boolean);
+  if (!names.length) return [];
+  const key = names.slice().sort().join('\n');
+  const cached = state.groupCache[inst.id];
+  if (cached && cached.key === key) return cached.ids;
+  let ids = [];
+  try {
+    const groups = await apiCall(base, 'hostgroup.get', { output: ['groupid'], filter: { name: names } }, token, inst.id);
+    ids = (groups || []).map(g => g.groupid).filter(Boolean);
+  } catch (e) {
+    console.warn('[zbx][' + inst.label + '] hostgroup.get falhou:', String((e && e.message) || e));
+  }
+  state.groupCache[inst.id] = { key, ids };
+  return ids;
+}
+
 const SEV_NAME = { 0: 'not_classified', 1: 'info', 2: 'warning', 3: 'average', 4: 'high', 5: 'disaster' };
 const SEV_COLOR = { 5: '#e45959', 4: '#e97659', 3: '#ffa059', 2: '#ffc859', 1: '#7499ff', 0: '#97aab3' };
 
@@ -74,7 +93,8 @@ let state = {
   snoozes: {},            // "instId:eventid" -> timestamp ate quando o problema fica em silencio (snooze individual)
   authModes: {},          // instId -> 'header' | 'body' = modo de auth por instancia (cache; evita 2x request no 6.x)
   status: { state: 'unconfigured' },
-  instStatus: {}          // instId -> {state, via, error, total, ...} status individual
+  instStatus: {},         // instId -> {state, via, error, total, ...} status individual
+  groupCache: {}          // instId -> {key, ids} cache da resolucao de host groups (nome -> groupid)
 };
 let _pollInFlight = false, _pollAgain = false; // mutex + coalescing do poll
 
@@ -396,6 +416,8 @@ async function _pollInstance(inst) {
     };
     const _min = Number(config.minSeverity) || 0;
     if (_min > 0) pget.severities = Array.from({ length: 6 - _min }, (_, i) => _min + i);
+    const gids = await resolveGroupIds(base, token, inst); // filtro por host group (opcional, corta no servidor)
+    if (gids.length) pget.groupids = gids;
     problems = await apiCall(base, 'problem.get', pget, token, inst.id);
   } catch (e) {
     const emsg = String((e && e.message) || e);
@@ -635,6 +657,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     const validIds = new Set((config.instances || []).map(i => i.id));
     Object.keys(state.instStatus).forEach(id => { if (!validIds.has(id)) delete state.instStatus[id]; });
     Object.keys(state.authModes).forEach(id => { if (!validIds.has(id)) delete state.authModes[id]; });
+    Object.keys(state.groupCache).forEach(id => { if (!validIds.has(id)) delete state.groupCache[id]; });
     state.initialized = false; // re-baseline: nao floodar com o que ja existe
     state.lastAlarmTs = 0;
     scheduleAlarm();
