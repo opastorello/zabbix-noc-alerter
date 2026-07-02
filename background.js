@@ -32,6 +32,9 @@ const DEFAULT_CONFIG = {
   excludePatterns: '',    // esconder problema cujo nome/host contenha qualquer um destes (virgula ou linha)
   maxAgeDays: 0,          // = "Age less than N days" do Zabbix (0 = todos; corta cronicos velhos)
   muted: false,           // mudo temporario (toggle pelo popup)
+  suppressDuringMeeting: true, // silenciar durante reuniao ativa do Google Meet
+  meetSuppressSound: false,    // silenciar sons durante reuniao
+  meetSuppressNotif: false,    // silenciar notificacoes durante reuniao
   lang: ''                // '' = auto (idioma do navegador); 'pt' | 'en' | 'es'
 };
 
@@ -251,6 +254,14 @@ function saveSnoozes() {
   chrome.storage.local.set({ snoozes: state.snoozes });
 }
 
+async function isInMeeting() {
+  // NUNCA deixar uma falha de tabs.query (permissao/contexto) abortar o poll inteiro -> sem alerta.
+  try {
+    const tabs = await chrome.tabs.query({ url: 'https://meet.google.com/*' });
+    return tabs.some(t => t.url && /^https:\/\/meet\.google\.com\/[a-z]{3}-[a-z]{4}-[a-z]{3}/.test(t.url));
+  } catch (e) { return false; }
+}
+
 async function _pollZabbixOnce() {
   const instances = enabledInstances(config);
   if (!instances.length) { setStatus({ state: 'unconfigured' }); setBadge('', ''); return; }
@@ -339,13 +350,14 @@ async function _pollZabbixOnce() {
 
   // dispara alerta
   const now = Date.now();
+  const inMeeting = config.suppressDuringMeeting && await isInMeeting();
   if (!config.muted) {
     // NOVOS: som + notificacao imediatos. Manutencao NAO alarma (so aparece na lista, com a tag MNT).
     const freshAlert = allFresh.filter(p => !inMaintenance(p) && !isSnoozed(p));
     if (freshAlert.length) {
       const freshMax = freshAlert.reduce((m, p) => Math.max(m, Number(p.severity)), 0);
-      if (config.soundEnabled) { playSound(soundForSeverity(freshMax), config.volume); state.lastAlarmTs = now; }
-      if (config.notificationsEnabled) {
+      if (config.soundEnabled && !(inMeeting && config.meetSuppressSound)) { playSound(soundForSeverity(freshMax), config.volume); state.lastAlarmTs = now; }
+      if (config.notificationsEnabled && !(inMeeting && config.meetSuppressNotif)) {
         freshAlert.sort((a, b) => Number(b.severity) - Number(a.severity));
         freshAlert.slice(0, MAX_NOTIFS_PER_POLL).forEach(p => notify(p, baseFor(p._instId)));
       }
@@ -355,8 +367,8 @@ async function _pollZabbixOnce() {
       const woke = allActive.filter(p => justWoke.includes(snzKey(p)) && p.acknowledged !== '1' && !inMaintenance(p));
       if (woke.length) {
         const wokeMax = woke.reduce((m, p) => Math.max(m, Number(p.severity)), 0);
-        if (config.soundEnabled) { playSound(soundForSeverity(wokeMax), config.volume); state.lastAlarmTs = now; }
-        if (config.notificationsEnabled) {
+        if (config.soundEnabled && !(inMeeting && config.meetSuppressSound)) { playSound(soundForSeverity(wokeMax), config.volume); state.lastAlarmTs = now; }
+        if (config.notificationsEnabled && !(inMeeting && config.meetSuppressNotif)) {
           woke.sort((a, b) => Number(b.severity) - Number(a.severity));
           woke.slice(0, MAX_NOTIFS_PER_POLL).forEach(p => notify(p, baseFor(p._instId)));
         }
@@ -368,9 +380,9 @@ async function _pollZabbixOnce() {
       const gap = Math.max(MIN_POLL_SEC, Number(config.repeatInterval) || 60) * 1000;
       if (nagPool.length && (now - (state.lastAlarmTs || 0)) >= gap) {
         const nagMax = nagPool.reduce((m, p) => Math.max(m, Number(p.severity)), 0);
-        if (config.soundEnabled) playSound(soundForSeverity(nagMax), config.volume);
+        if (config.soundEnabled && !(inMeeting && config.meetSuppressSound)) playSound(soundForSeverity(nagMax), config.volume);
         // re-notifica o problema de maior severidade com id FIXO -> atualiza no lugar (sem flood)
-        if (config.notificationsEnabled && config.nagNotify) {
+        if (config.notificationsEnabled && config.nagNotify && !(inMeeting && config.meetSuppressNotif)) {
           const top = nagPool.find(p => Number(p.severity) === nagMax) || nagPool[0];
           notify(top, baseFor(top._instId), 'zbx-nag');
         }

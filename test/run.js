@@ -20,7 +20,7 @@ let captured = { sounds: [], notifs: [], cleared: [], badge: null };
 function resetCaptures() { captured = { sounds: [], notifs: [], cleared: [], badge: null }; }
 
 // ---------- cenario do Zabbix (controlado por teste) ----------
-let scenario = { byBase: {}, version: '6.0.4', groups: {}, lastProblemGet: {} };
+let scenario = { byBase: {}, version: '6.0.4', groups: {}, lastProblemGet: {}, meetTabs: [] };
 
 // ---------- mock chrome ----------
 const storageLocal = {}, storageSession = {};
@@ -50,6 +50,7 @@ const chrome = {
   },
   alarms: { create: () => {}, clear: () => {}, onAlarm: { addListener: () => {} }, get: (_n, cb) => cb && cb(null) },
   cookies: { get: async () => null, getAll: async () => [] },
+  tabs: { query: async ({ url }) => scenario.meetTabs.filter(u => String(url) === 'https://meet.google.com/*' && u.startsWith('https://meet.google.com/')).map(u => ({ url: u })) },
   offscreen: { hasDocument: async () => true, createDocument: async () => {}, closeDocument: async () => {} },
 };
 
@@ -169,6 +170,37 @@ function P(ev, sev, x = {}) { return { eventid: String(ev), objectid: 't' + ev, 
   scenario.byBase['https://z1'].push(P(201, 5, { suppression_data: [{ maintenanceid: '7' }] }));
   await poll();
   assert(captured.sounds.length === 0, 'novo problema em manutencao nao toca som');
+
+  console.log('\n--- Integracao: modo reuniao (Google Meet) ---');
+  scenario.byBase = { 'https://z1': [P(600, 5)], 'https://z2': [] };
+  await setConfig({ instances: [{ id: 'inst1', label: 'PRD', url: 'https://z1', token: 't1', enabled: true }], minSeverity: 0, soundEnabled: true, notificationsEnabled: true, repeatAlarm: false, suppressDuringMeeting: true, meetSuppressSound: true, meetSuppressNotif: false });
+  await poll(); // baseline
+  // em reuniao real: som silenciado, notificacao continua
+  scenario.meetTabs = ['https://meet.google.com/kyd-fyte-jgt'];
+  scenario.byBase['https://z1'].push(P(601, 5, { name: 'novo em call' }));
+  await poll();
+  assert(captured.sounds.length === 0, 'em reuniao com meetSuppressSound: nao toca som');
+  assert(captured.notifs.length >= 1, 'em reuniao com meetSuppressSound: notificacao continua');
+  // so a homepage do meet aberta (sem codigo) NAO conta como reuniao
+  scenario.meetTabs = ['https://meet.google.com/'];
+  scenario.byBase['https://z1'].push(P(602, 5, { name: 'sem call' }));
+  await poll();
+  assert(captured.sounds.length === 1, 'meet.google.com sem codigo nao suprime (toca som)');
+  // meetSuppressNotif: silencia notificacao mas som toca
+  scenario.meetTabs = ['https://meet.google.com/kyd-fyte-jgt'];
+  await setConfig({ instances: BG.getConfig().instances, minSeverity: 0, soundEnabled: true, notificationsEnabled: true, repeatAlarm: false, suppressDuringMeeting: true, meetSuppressSound: false, meetSuppressNotif: true });
+  await poll(); // baseline apos setConfig (re-baseline)
+  scenario.byBase['https://z1'].push(P(603, 5, { name: 'notif off' }));
+  await poll();
+  assert(captured.sounds.length === 1, 'em reuniao com meetSuppressNotif: som toca');
+  assert(captured.notifs.length === 0, 'em reuniao com meetSuppressNotif: notificacao silenciada');
+  // suppressDuringMeeting off: nada e suprimido mesmo em reuniao
+  await setConfig({ instances: BG.getConfig().instances, minSeverity: 0, soundEnabled: true, notificationsEnabled: true, repeatAlarm: false, suppressDuringMeeting: false, meetSuppressSound: true, meetSuppressNotif: true });
+  await poll();
+  scenario.byBase['https://z1'].push(P(604, 5, { name: 'toggle off' }));
+  await poll();
+  assert(captured.sounds.length === 1 && captured.notifs.length >= 1, 'suppressDuringMeeting off: som e notificacao normais');
+  scenario.meetTabs = [];
 
   console.log('\n--- Integracao: resolvido e instancia desabilitada ---');
   scenario.byBase = { 'https://z1': [P(300, 5)], 'https://z2': [] };

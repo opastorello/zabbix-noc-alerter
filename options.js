@@ -11,7 +11,7 @@ const SOUNDS = [
 const MAX_INSTANCES = 8;
 const NUM = ['pollInterval', 'repeatInterval'];
 const SEL = ['minSeverity', 'soundSev5', 'soundSev4', 'soundSev3', 'soundSev2', 'soundSev1'];
-const CHK = ['soundEnabled', 'notificationsEnabled', 'notifyResolved', 'badgeUnseen', 'repeatAlarm', 'nagNotify', 'ignoreAckd', 'ignoreSuppressed', 'ignoreMaintenance'];
+const CHK = ['soundEnabled', 'notificationsEnabled', 'notifyResolved', 'badgeUnseen', 'repeatAlarm', 'nagNotify', 'suppressDuringMeeting', 'meetSuppressNotif', 'meetSuppressSound', 'ignoreAckd', 'ignoreSuppressed', 'ignoreMaintenance'];
 
 let currentLang = 'pt';
 
@@ -43,6 +43,12 @@ document.addEventListener('DOMContentLoaded', () => {
 
   const vol = document.getElementById('volume');
   vol.addEventListener('input', () => updateVolLabel());
+
+  const syncMeetSub = () => {
+    const on = document.getElementById('suppressDuringMeeting').checked;
+    document.getElementById('meetSubOptions').classList.toggle('hidden', !on);
+  };
+  document.getElementById('suppressDuringMeeting').addEventListener('change', syncMeetSub);
 
   document.querySelectorAll('[data-test]').forEach(btn => {
     btn.addEventListener('click', () => {
@@ -225,6 +231,7 @@ function loadSettings() {
     NUM.forEach(id => { const el = document.getElementById(id); if (c[id] != null) el.value = c[id]; });
     SEL.forEach(id => { const el = document.getElementById(id); if (c[id] != null) el.value = String(c[id]); });
     CHK.forEach(id => { const el = document.getElementById(id); el.checked = !!c[id]; });
+    document.getElementById('meetSubOptions').classList.toggle('hidden', !c.suppressDuringMeeting);
     document.getElementById('volume').value = c.volume ?? 0.8;
     document.getElementById('maxAgeDays').value = c.maxAgeDays ?? 0;
     document.getElementById('excludePatterns').value = c.excludePatterns || '';

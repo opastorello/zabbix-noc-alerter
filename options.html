@@ -41,6 +41,8 @@
     .btn-save { background:var(--accent); color:#fff; } .btn-reset { background:var(--bg-card); color:var(--text); border:1px solid var(--border); }
     .btn-test { background:#1e3a5f; color:#9cc4ff; } .btn-mini { padding:6px 10px; background:var(--bg-hover); color:var(--text); border:1px solid var(--border); }
     .btn-row { display:flex; gap:8px; margin-top:18px; }
+    .sub-options { padding-left:44px; margin-top:-4px; }
+    .sub-options.hidden { display:none; }
     .alert { padding:8px 12px; border-radius:6px; margin-top:10px; font-size:11px; display:none; }
     .alert.success { background:#0a2a1a; color:var(--green); display:block; }
     .alert.error { background:var(--accent-dim); color:#ff8a8a; display:block; }
@@ -140,6 +142,11 @@
       <div class="field"><label class="check"><input type="checkbox" id="badgeUnseen"> <span data-i18n="badge_unseen">Badge conta só problemas novos (zera ao abrir)</span></label></div>
       <div class="field"><label class="check"><input type="checkbox" id="repeatAlarm"> <span data-i18n="repeat">Re-alarmar enquanto houver problema (até dar ack ou mudo)</span></label></div>
       <div class="field"><label class="check"><input type="checkbox" id="nagNotify"> <span data-i18n="nag_notify">Re-notificar no re-alarme (além do som)</span></label></div>
+      <div class="field"><label class="check"><input type="checkbox" id="suppressDuringMeeting"> <span data-i18n="meet_suppress">Modo reunião (Google Meet)</span></label></div>
+      <div id="meetSubOptions" class="sub-options hidden">
+        <div class="field"><label class="check"><input type="checkbox" id="meetSuppressNotif"> <span data-i18n="meet_notif">Notificações</span></label></div>
+        <div class="field"><label class="check"><input type="checkbox" id="meetSuppressSound"> <span data-i18n="meet_sound">Sons</span></label></div>
+      </div>
       <div class="field">
         <label for="repeatInterval" data-i18n="repeat_int">Intervalo do re-alarme (seg)</label>
         <input type="number" id="repeatInterval" min="10" max="3600" value="60">
