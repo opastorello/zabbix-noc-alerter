@@ -20,7 +20,7 @@ let captured = { sounds: [], notifs: [], cleared: [], badge: null };
 function resetCaptures() { captured = { sounds: [], notifs: [], cleared: [], badge: null }; }
 
 // ---------- cenario do Zabbix (controlado por teste) ----------
-let scenario = { byBase: {}, version: '6.0.4', groups: {}, lastProblemGet: {} };
+let scenario = { byBase: {}, version: '6.0.4', groups: {}, lastProblemGet: {}, meetTabs: [], workPeriod: '' };
 
 // ---------- mock chrome ----------
 const storageLocal = {}, storageSession = {};
@@ -50,6 +50,7 @@ const chrome = {
   },
   alarms: { create: () => {}, clear: () => {}, onAlarm: { addListener: () => {} }, get: (_n, cb) => cb && cb(null) },
   cookies: { get: async () => null, getAll: async () => [] },
+  tabs: { query: async ({ url }) => scenario.meetTabs.filter(u => String(url) === 'https://meet.google.com/*' && u.startsWith('https://meet.google.com/')).map(u => ({ url: u })) },
   offscreen: { hasDocument: async () => true, createDocument: async () => {}, closeDocument: async () => {} },
 };
 
@@ -63,6 +64,10 @@ async function fetchMock(url, opts) {
   else if (body.method === 'hostgroup.get') { const want = (body.params.filter && body.params.filter.name) || []; result = (scenario.groups[base] || []).filter(g => want.includes(g.name)).map(g => ({ groupid: g.groupid })); }
   else if (body.method === 'trigger.get') result = ((body.params && body.params.triggerids) || []).map(id => ({ triggerid: id, hosts: [{ hostid: 'h' + id, name: 'host-' + id }] }));
   else if (body.method === 'event.acknowledge') result = { eventids: body.params.eventids };
+  else if (body.method === 'settings.get') {
+    if (scenario.workPeriod === null) return { status: 200, json: async () => ({ jsonrpc: '2.0', error: { message: 'No permissions', data: 'settings.get negado' }, id: 1 }) };
+    result = { work_period: scenario.workPeriod || '' };
+  }
   else result = [];
   return { status: 200, json: async () => ({ jsonrpc: '2.0', result, id: 1 }) };
 }
@@ -128,6 +133,19 @@ function P(ev, sev, x = {}) { return { eventid: String(ev), objectid: 't' + ev, 
     'https://z.example.com/tr_events.php?triggerid=10&eventid=99', 'problemUrl: evento exato via tr_events.php');
   assert(sandbox.problemUrl('https://z.example.com', { hostid: '7' }).includes('hostids[]=7'), 'problemUrl: fallback por hostid');
 
+  // inWorkPeriod (work_period do Zabbix; dias 1=seg..7=dom)
+  const qua10 = new Date(2026, 6, 8, 10, 0);  // quarta 08/07/2026 10:00
+  const sab10 = new Date(2026, 6, 11, 10, 0); // sabado
+  const dom10 = new Date(2026, 6, 12, 10, 0); // domingo
+  assert(sandbox.inWorkPeriod('1-5,09:00-18:00', qua10) === true, 'inWorkPeriod: quarta 10h dentro de 1-5,09:00-18:00');
+  assert(sandbox.inWorkPeriod('1-5,09:00-18:00', new Date(2026, 6, 8, 18, 0)) === false, 'inWorkPeriod: 18:00 exato ja e fora (fim exclusivo)');
+  assert(sandbox.inWorkPeriod('1-5,09:00-18:00', sab10) === false, 'inWorkPeriod: sabado fora de 1-5');
+  assert(sandbox.inWorkPeriod('1-5,09:00-18:00;6-7,09:00-12:00', dom10) === true, 'inWorkPeriod: domingo casa no 2o segmento');
+  assert(sandbox.inWorkPeriod('7,09:00-12:00', dom10) === true, 'inWorkPeriod: dia unico sem range');
+  assert(sandbox.inWorkPeriod('', qua10) === true, 'inWorkPeriod: vazio = sempre dentro (fail-open)');
+  assert(sandbox.inWorkPeriod('lixo-invalido', qua10) === true, 'inWorkPeriod: formato invalido = fail-open');
+  assert(sandbox.inWorkPeriod('1-7,00:00-24:00', dom10) === true, 'inWorkPeriod: 00:00-24:00 cobre o dia todo');
+
   // resolveLang
   eq(sandbox.resolveLang('en'), 'en', 'resolveLang: idioma valido');
   assert(['pt', 'en', 'es'].includes(sandbox.resolveLang('xx')), 'resolveLang: idioma invalido cai num suportado');
@@ -169,6 +187,85 @@ function P(ev, sev, x = {}) { return { eventid: String(ev), objectid: 't' + ev, 
   scenario.byBase['https://z1'].push(P(201, 5, { suppression_data: [{ maintenanceid: '7' }] }));
   await poll();
   assert(captured.sounds.length === 0, 'novo problema em manutencao nao toca som');
+
+  console.log('\n--- Integracao: modo reuniao (Google Meet) ---');
+  scenario.byBase = { 'https://z1': [P(600, 5)], 'https://z2': [] };
+  await setConfig({ instances: [{ id: 'inst1', label: 'PRD', url: 'https://z1', token: 't1', enabled: true }], minSeverity: 0, soundEnabled: true, notificationsEnabled: true, repeatAlarm: false, suppressDuringMeeting: true, meetSuppressSound: true, meetSuppressNotif: false });
+  await poll(); // baseline
+  // em reuniao real: som silenciado, notificacao continua
+  scenario.meetTabs = ['https://meet.google.com/kyd-fyte-jgt'];
+  scenario.byBase['https://z1'].push(P(601, 5, { name: 'novo em call' }));
+  await poll();
+  assert(captured.sounds.length === 0, 'em reuniao com meetSuppressSound: nao toca som');
+  assert(captured.notifs.length >= 1, 'em reuniao com meetSuppressSound: notificacao continua');
+  // so a homepage do meet aberta (sem codigo) NAO conta como reuniao
+  scenario.meetTabs = ['https://meet.google.com/'];
+  scenario.byBase['https://z1'].push(P(602, 5, { name: 'sem call' }));
+  await poll();
+  assert(captured.sounds.length === 1, 'meet.google.com sem codigo nao suprime (toca som)');
+  // meetSuppressNotif: silencia notificacao mas som toca
+  scenario.meetTabs = ['https://meet.google.com/kyd-fyte-jgt'];
+  await setConfig({ instances: BG.getConfig().instances, minSeverity: 0, soundEnabled: true, notificationsEnabled: true, repeatAlarm: false, suppressDuringMeeting: true, meetSuppressSound: false, meetSuppressNotif: true });
+  await poll(); // baseline apos setConfig (re-baseline)
+  scenario.byBase['https://z1'].push(P(603, 5, { name: 'notif off' }));
+  await poll();
+  assert(captured.sounds.length === 1, 'em reuniao com meetSuppressNotif: som toca');
+  assert(captured.notifs.length === 0, 'em reuniao com meetSuppressNotif: notificacao silenciada');
+  // suppressDuringMeeting off: nada e suprimido mesmo em reuniao
+  await setConfig({ instances: BG.getConfig().instances, minSeverity: 0, soundEnabled: true, notificationsEnabled: true, repeatAlarm: false, suppressDuringMeeting: false, meetSuppressSound: true, meetSuppressNotif: true });
+  await poll();
+  scenario.byBase['https://z1'].push(P(604, 5, { name: 'toggle off' }));
+  await poll();
+  assert(captured.sounds.length === 1 && captured.notifs.length >= 1, 'suppressDuringMeeting off: som e notificacao normais');
+  scenario.meetTabs = [];
+
+  console.log('\n--- Integracao: working time (horario de trabalho) ---');
+  // fora do horario: work_period que nunca casa -> som e notificacao silenciados, badge segue
+  scenario.byBase = { 'https://z1': [P(800, 5)] };
+  scenario.workPeriod = '1-7,00:00-00:00';
+  await setConfig({ instances: [{ id: 'inst1', label: 'PRD', url: 'https://z1', token: 't1', enabled: true }], minSeverity: 0, soundEnabled: true, notificationsEnabled: true, notifyResolved: true, repeatAlarm: false, suppressDuringMeeting: false, workingTimeOnly: true });
+  await poll(); // baseline
+  scenario.byBase['https://z1'].push(P(801, 5, { name: 'fora do horario' }));
+  await poll();
+  assert(captured.sounds.length === 0, 'fora do working time: nao toca som');
+  assert(captured.notifs.length === 0, 'fora do working time: nao notifica');
+  eq(captured.badge, '2', 'fora do working time: badge continua atualizando');
+  // dentro do horario: alerta normal
+  scenario.workPeriod = '1-7,00:00-24:00';
+  await setConfig({ instances: BG.getConfig().instances, minSeverity: 0, soundEnabled: true, notificationsEnabled: true, repeatAlarm: false, workingTimeOnly: true }); // limpa cache + re-baseline
+  scenario.byBase['https://z1'].push(P(802, 5, { name: 'dentro do horario' }));
+  await poll();
+  assert(captured.sounds.length === 1 && captured.notifs.length >= 1, 'dentro do working time: som e notificacao normais');
+  // settings.get sem permissao: fail-open (alerta normalmente)
+  scenario.workPeriod = null;
+  await setConfig({ instances: BG.getConfig().instances, minSeverity: 0, soundEnabled: true, notificationsEnabled: true, repeatAlarm: false, workingTimeOnly: true });
+  scenario.byBase['https://z1'].push(P(803, 5, { name: 'sem permissao' }));
+  await poll();
+  assert(captured.sounds.length === 1 && captured.notifs.length >= 1, 'settings.get sem permissao: fail-open (alerta normal)');
+  // opcao desligada: nem consulta o work_period
+  scenario.workPeriod = '1-7,00:00-00:00';
+  await setConfig({ instances: BG.getConfig().instances, minSeverity: 0, soundEnabled: true, notificationsEnabled: true, repeatAlarm: false, workingTimeOnly: false });
+  scenario.byBase['https://z1'].push(P(804, 5, { name: 'opcao off' }));
+  await poll();
+  assert(captured.sounds.length === 1 && captured.notifs.length >= 1, 'workingTimeOnly off: alerta normal mesmo fora do horario');
+  // getWorkPeriod (validacao usada pela pagina de opcoes pra habilitar/desabilitar o checkbox)
+  scenario.workPeriod = '1-5,09:00-18:00';
+  await setConfig({ instances: BG.getConfig().instances, minSeverity: 0, repeatAlarm: false }); // limpa o cache
+  const wp = await send({ action: 'getWorkPeriod' });
+  eq([wp.ok, wp.list.map(i => i.period)], [true, ['1-5,09:00-18:00']], 'getWorkPeriod: retorna o periodo lido do servidor');
+  // varias instancias: lista o periodo de cada uma
+  await setConfig({ instances: [
+    { id: 'inst1', label: 'PRD', url: 'https://z1', token: 't1', enabled: true },
+    { id: 'inst2', label: 'HML', url: 'https://z2', token: 't2', enabled: true },
+  ], minSeverity: 0, repeatAlarm: false });
+  const wpm = await send({ action: 'getWorkPeriod' });
+  eq(wpm.list.map(i => i.label), ['PRD', 'HML'], 'getWorkPeriod: multi-instancia lista todas as legiveis');
+  await setConfig({ instances: [{ id: 'inst1', label: 'PRD', url: 'https://z1', token: 't1', enabled: true }], minSeverity: 0, repeatAlarm: false });
+  scenario.workPeriod = null; // settings.get sem permissao
+  await setConfig({ instances: BG.getConfig().instances, minSeverity: 0, repeatAlarm: false });
+  const wp2 = await send({ action: 'getWorkPeriod' });
+  eq(wp2.ok, false, 'getWorkPeriod: leitura impossivel retorna ok=false (opcoes desativam o checkbox)');
+  scenario.workPeriod = '';
 
   console.log('\n--- Integracao: resolvido e instancia desabilitada ---');
   scenario.byBase = { 'https://z1': [P(300, 5)], 'https://z2': [] };

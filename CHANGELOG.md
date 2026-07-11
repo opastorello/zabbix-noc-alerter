@@ -7,6 +7,20 @@ in `manifest.json`.
 
 ## [Unreleased]
 
+## [0.4.0]
+
+### Added
+- Meeting mode (Google Meet): silence sounds and/or notifications while a Meet call tab is open. Both sub-options now default to on, so enabling the mode actually silences alerts.
+- "Alert only during working hours" option: reads the `work_period` from the Zabbix server (`settings.get`) and keeps sounds and notifications silent outside it; the list, badge and status keep updating. With multiple instances, all readable schedules are shown in the options and alerts fire when inside any of them. Fail-open: if the API cannot read the setting (permissions, Zabbix < 5.4), alerts work normally, and the options page disables the checkbox showing the reason.
+
+### Fixed
+- Volume at 0% is now truly mute; it used to fall back to 80% because 0 was treated as "unset".
+- Popup no longer opens empty/"configure an instance" right after the browser starts: the last known status is persisted and shown, and both the popup and the background re-check automatically when the status is stale (no more manual "check now").
+- The sub-30s polling heartbeat is re-armed every minute; Chrome silently destroys the offscreen document after ~30s without audio, which used to degrade polling to once a minute until a sound played.
+
+### Removed
+- The test-sound button in the popup toolbar (sounds can still be previewed per severity in the options page).
+
 ## [0.3.0]
 
 ### Added

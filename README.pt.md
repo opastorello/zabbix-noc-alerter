@@ -33,6 +33,8 @@ notificação, direto no navegador, enquanto você trabalha em qualquer outra co
 - 🛰️ **Multi-instância:** monitore até 8 servidores Zabbix independentes ao mesmo tempo, cada um com sua URL e token opcional; cada problema mostra um badge da instância.
 - 🔊 **Som por severidade** com volume e botão de teste.
 - 🔁 **Re-alarme** (som e notificação) enquanto houver problema não reconhecido, até dar ack ou mudo.
+- 📅 **Alertar só no horário de trabalho:** lê o Working time do seu servidor Zabbix e fica em silêncio fora dele (lista e badge continuam atualizando).
+- 🎦 **Modo reunião (Google Meet):** silencia sons e/ou notificações enquanto você está numa call do Meet.
 - 🛠️ **Ciente de manutenção:** problemas em janela de manutenção ganham a tag MNT e ficam silenciosos (ou você esconde).
 - 🔍 **Filtro ao vivo** no popup por host ou nome do problema, ou clicando numa severidade; **ordenar** e **agrupar por host ou instância**.
 - 💤 **Adiar (snooze) um problema só** (15 min a 4 h) sem o mudo global; ao acabar, ele re-alerta.

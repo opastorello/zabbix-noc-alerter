@@ -235,9 +235,12 @@ const PRESETS = {
 };
 
 function play(preset, volume) {
+  const v = Number(volume);
+  const vol = Number.isFinite(v) ? Math.max(0, Math.min(1, v)) : 0.8;
+  if (vol <= 0) return; // 0% = mudo (e evita gain NaN se vier lixo)
   const c = ac();
   const master = c.createGain();
-  master.gain.value = Math.max(0, Math.min(1, Number(volume)));
+  master.gain.value = vol;
   const shaper = makeShaper(c, 0.35);
   const pre = c.createGain();
   pre.gain.value = 0.8;
