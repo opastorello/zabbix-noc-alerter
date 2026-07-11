@@ -33,6 +33,8 @@ right in your browser, while you work on anything else.
 - 🛰️ **Multi-instance:** watch up to 8 independent Zabbix servers at once, each with its own URL and optional token; every problem is badged with its instance.
 - 🔊 **Per-severity sound** with volume and a test button.
 - 🔁 **Re-alarm** (sound and notification) while a problem is unacknowledged, until you ack it or mute.
+- 📅 **Alert only during working hours:** reads the Working time from your Zabbix server and stays silent outside it (list and badge keep updating).
+- 🎦 **Meeting mode (Google Meet):** silences sounds and/or notifications while you are in a Meet call.
 - 🛠️ **Maintenance-aware:** problems in a maintenance window get an MNT tag and stay silent (or hide them).
 - 🔍 **Live filter** in the popup by host or problem name, or by clicking a severity; **sort** and **group by host or instance**.
 - 💤 **Snooze a single problem** (15 min to 4 h) without the global mute; it re-alerts when the snooze ends.
