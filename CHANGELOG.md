@@ -7,6 +7,8 @@ in `manifest.json`.
 
 ## [Unreleased]
 
+## [0.4.0]
+
 ### Added
 - Meeting mode (Google Meet): silence sounds and/or notifications while a Meet call tab is open. Both sub-options now default to on, so enabling the mode actually silences alerts.
 - "Alert only during working hours" option: reads the `work_period` from the Zabbix server (`settings.get`) and keeps sounds and notifications silent outside it; the list, badge and status keep updating. With multiple instances, all readable schedules are shown in the options and alerts fire when inside any of them. Fail-open: if the API cannot read the setting (permissions, Zabbix < 5.4), alerts work normally, and the options page disables the checkbox showing the reason.
