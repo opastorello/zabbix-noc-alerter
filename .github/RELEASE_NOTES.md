@@ -1,10 +1,10 @@
-## What's new in v0.3.0
-- Multi-instance: watch up to 8 independent Zabbix instances at once, each with its own URL and an optional token. Every problem in the popup is badged with its instance, and ack/snooze route to the correct one. Community contribution by @GoianoMarques.
-- Per-instance host group filter: name the Zabbix host groups to watch and the extension filters them at the server (groupids); empty = all.
-- Group the popup list by host or by instance, with collapsible group headers.
-- Snooze a single problem (15 min to 4 h) without the global mute; it re-alerts when the snooze ends.
-- Click a severity stat to filter the list; sort by severity, age or host.
-- Export and import settings as JSON (instance tokens are never exported).
+## What's new in v0.4.0
+- Meeting mode (Google Meet): silences sounds and/or notifications while you are in a Meet call. Both sub-options come enabled by default.
+- Alert only during working hours: reads the Working time from your Zabbix server (`settings.get`) and stays silent outside it; the list, badge and status keep updating. With multiple instances, all readable schedules are shown and alerts fire when inside any of them. Fail-open: if the setting cannot be read, alerts work normally and the options page disables the checkbox showing the reason.
+- Fixed: volume at 0% is now truly mute (it used to fall back to 80%).
+- Fixed: the popup no longer opens empty right after the browser starts; the last known status is persisted and both the popup and the background re-check automatically when it is stale.
+- Fixed: the sub-30s polling heartbeat is re-armed every minute (Chrome silently destroys the offscreen document after ~30s without audio, which degraded polling to once a minute).
+- Removed the test-sound button from the popup toolbar (per-severity previews remain in the options).
 
 ---
 
@@ -14,6 +14,8 @@ A dependency-free Chrome MV3 extension that fires a sound alarm and a browser no
 - Multi-instance: up to 8 independent Zabbix servers, each with session-cookie auth or an optional token.
 - Per-severity sound with volume and a test button.
 - Re-alarm while a problem is unacknowledged, until you ack it or mute.
+- Alert only during working hours, read from the Zabbix server's Working time.
+- Meeting mode: silence sounds and/or notifications during a Google Meet call.
 - Shows the host (and the instance, when you watch more than one) in the list and in the notification.
 - Acknowledge or snooze a single problem from the popup.
 - Resolved notification when a problem recovers.
