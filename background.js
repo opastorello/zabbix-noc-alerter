@@ -33,8 +33,9 @@ const DEFAULT_CONFIG = {
   maxAgeDays: 0,          // = "Age less than N days" do Zabbix (0 = todos; corta cronicos velhos)
   muted: false,           // mudo temporario (toggle pelo popup)
   suppressDuringMeeting: true, // silenciar durante reuniao ativa do Google Meet
-  meetSuppressSound: false,    // silenciar sons durante reuniao
-  meetSuppressNotif: false,    // silenciar notificacoes durante reuniao
+  meetSuppressSound: true,     // silenciar sons durante reuniao
+  meetSuppressNotif: true,     // silenciar notificacoes durante reuniao
+  workingTimeOnly: false, // alertar so dentro do Working time configurado no Zabbix server
   lang: ''                // '' = auto (idioma do navegador); 'pt' | 'en' | 'es'
 };
 
@@ -97,23 +98,33 @@ let state = {
   authModes: {},          // instId -> 'header' | 'body' = modo de auth por instancia (cache; evita 2x request no 6.x)
   status: { state: 'unconfigured' },
   instStatus: {},         // instId -> {state, via, error, total, ...} status individual
-  groupCache: {}          // instId -> {key, ids} cache da resolucao de host groups (nome -> groupid)
+  groupCache: {},         // instId -> {key, ids} cache da resolucao de host groups (nome -> groupid)
+  workPeriodCache: {}     // instId -> {period|null, ts} cache do work_period (settings.get); null = falhou
 };
 let _pollInFlight = false, _pollAgain = false; // mutex + coalescing do poll
 
 // =====================================================
 // Init
 // =====================================================
-chrome.storage.local.get(['config', 'lastSeenTs', 'snoozes'], async (r) => {
+chrome.storage.local.get(['config', 'lastSeenTs', 'snoozes', 'status'], async (r) => {
   if (r.config) {
     config = { ...DEFAULT_CONFIG, ...r.config };
     config = migrateConfig(config);
+    // Modo reuniao ligado com as duas sub-opcoes desligadas = no-op (estado de configs antigas,
+    // quando o default das sub-opcoes era false) -> normaliza para silenciar tudo.
+    if (config.suppressDuringMeeting && !config.meetSuppressSound && !config.meetSuppressNotif) {
+      config.meetSuppressSound = true;
+      config.meetSuppressNotif = true;
+    }
     saveConfig(); // persiste migracao do formato antigo (zabbixUrl/apiToken -> instances[]) se houve
   }
   // 1a vez: ancora "visto" no agora (nao marca os problemas ja existentes como novos)
   state.lastSeenTs = r.lastSeenTs || Date.now();
   if (!r.lastSeenTs) chrome.storage.local.set({ lastSeenTs: state.lastSeenTs });
   state.snoozes = r.snoozes || {}; // snoozes individuais sobrevivem ao sleep do service worker
+  // ultimo status persistido: se o popup abrir antes do 1o poll terminar (ex.: logo apos abrir o
+  // navegador), mostra o ultimo estado conhecido em vez de "sem configuracao"/vazio.
+  if (r.status && r.status.state && r.status.state !== 'unconfigured') state.status = r.status;
   scheduleAlarm();
   await startOffscreenTimer();
   pollZabbix();
@@ -254,6 +265,77 @@ function saveSnoozes() {
   chrome.storage.local.set({ snoozes: state.snoozes });
 }
 
+// ===== Working time (horario de trabalho do Zabbix server) =====
+// work_period do Zabbix: "d-d,hh:mm-hh:mm" separados por ";" (ex.: "1-5,09:00-18:00;6-6,10:00-13:00").
+// Dias: 1=segunda .. 7=domingo. Retorna true se a data cai dentro de algum periodo.
+// Vazio/invalido = true (fail-open: nunca deixar de alertar por configuracao ausente).
+function inWorkPeriod(period, date) {
+  const s = String(period || '').trim();
+  if (!s) return true;
+  const day = ((date.getDay() + 6) % 7) + 1; // JS 0=domingo -> Zabbix 1=segunda..7=domingo
+  const mins = date.getHours() * 60 + date.getMinutes();
+  let anyValid = false;
+  for (const seg of s.split(';')) {
+    const m = seg.trim().match(/^(\d)(?:-(\d))?,(\d{1,2}):(\d{2})-(\d{1,2}):(\d{2})$/);
+    if (!m) continue;
+    anyValid = true;
+    const d1 = +m[1], d2 = m[2] != null ? +m[2] : d1;
+    const t1 = +m[3] * 60 + +m[4], t2 = +m[5] * 60 + +m[6];
+    if (day >= d1 && day <= d2 && mins >= t1 && mins < t2) return true;
+  }
+  return !anyValid; // nenhum segmento parseavel = fail-open (nao suprimir por formato estranho)
+}
+
+const WORK_PERIOD_TTL_MS = 10 * 60 * 1000; // re-le o work_period do servidor a cada 10min
+
+// Le (com cache) o work_period de UMA instancia. Retorna {period} ou {err}.
+// Atencao: settings.get do Zabbix exige usuario Super admin - a falha mais comum e permissao.
+async function readWorkPeriod(inst) {
+  const cached = state.workPeriodCache[inst.id];
+  if (cached && (Date.now() - cached.ts) < WORK_PERIOD_TTL_MS) {
+    return cached.period != null ? { period: cached.period } : { err: cached.err || '' };
+  }
+  try {
+    const base = normalizeUrl(inst.url);
+    const token = (inst.token || '').trim() || await getSessionId(base);
+    if (!token) {
+      const err = t('no_session', resolveLang(config.lang));
+      state.workPeriodCache[inst.id] = { period: null, ts: Date.now(), err };
+      return { err };
+    }
+    const r = await apiCall(base, 'settings.get', { output: ['work_period'] }, token, inst.id);
+    const period = (r && r.work_period) || '';
+    state.workPeriodCache[inst.id] = { period, ts: Date.now() };
+    return { period };
+  } catch (e) {
+    const err = String((e && e.message) || e);
+    console.warn('[zbx][' + inst.label + '] settings.get (work_period) falhou:', err);
+    state.workPeriodCache[inst.id] = { period: null, ts: Date.now(), err };
+    return { err };
+  }
+}
+
+// Le o work_period de TODAS as instancias habilitadas.
+// Retorna {list: [{period, label}], error} - list vazia + error se nenhuma conseguiu ler.
+async function getWorkPeriods(instances) {
+  const list = [];
+  let firstErr = '';
+  for (const inst of instances) {
+    const r = await readWorkPeriod(inst);
+    if (r.period != null) list.push({ period: r.period, label: inst.label });
+    else firstErr = firstErr || r.err;
+  }
+  return { list, error: list.length ? '' : (firstErr || 'no instances') };
+}
+
+// "Em horario" se estiver dentro do work_period de QUALQUER instancia legivel (uniao).
+// Fail-open: nenhuma legivel = true (nunca deixar de alertar por falha de leitura).
+async function isWorkingTime(instances) {
+  const { list } = await getWorkPeriods(instances);
+  if (!list.length) return true;
+  return list.some(i => inWorkPeriod(i.period, new Date()));
+}
+
 async function isInMeeting() {
   // NUNCA deixar uma falha de tabs.query (permissao/contexto) abortar o poll inteiro -> sem alerta.
   try {
@@ -351,13 +433,18 @@ async function _pollZabbixOnce() {
   // dispara alerta
   const now = Date.now();
   const inMeeting = config.suppressDuringMeeting && await isInMeeting();
+  // fora do Working time do Zabbix (se a opcao estiver ligada): silencia som E notificacao;
+  // a lista, o badge e o status continuam atualizando normalmente.
+  const offHours = config.workingTimeOnly && !(await isWorkingTime(instances));
+  const suppressSound = offHours || (inMeeting && config.meetSuppressSound);
+  const suppressNotif = offHours || (inMeeting && config.meetSuppressNotif);
   if (!config.muted) {
     // NOVOS: som + notificacao imediatos. Manutencao NAO alarma (so aparece na lista, com a tag MNT).
     const freshAlert = allFresh.filter(p => !inMaintenance(p) && !isSnoozed(p));
     if (freshAlert.length) {
       const freshMax = freshAlert.reduce((m, p) => Math.max(m, Number(p.severity)), 0);
-      if (config.soundEnabled && !(inMeeting && config.meetSuppressSound)) { playSound(soundForSeverity(freshMax), config.volume); state.lastAlarmTs = now; }
-      if (config.notificationsEnabled && !(inMeeting && config.meetSuppressNotif)) {
+      if (config.soundEnabled && !suppressSound) { playSound(soundForSeverity(freshMax), config.volume); state.lastAlarmTs = now; }
+      if (config.notificationsEnabled && !suppressNotif) {
         freshAlert.sort((a, b) => Number(b.severity) - Number(a.severity));
         freshAlert.slice(0, MAX_NOTIFS_PER_POLL).forEach(p => notify(p, baseFor(p._instId)));
       }
@@ -367,8 +454,8 @@ async function _pollZabbixOnce() {
       const woke = allActive.filter(p => justWoke.includes(snzKey(p)) && p.acknowledged !== '1' && !inMaintenance(p));
       if (woke.length) {
         const wokeMax = woke.reduce((m, p) => Math.max(m, Number(p.severity)), 0);
-        if (config.soundEnabled && !(inMeeting && config.meetSuppressSound)) { playSound(soundForSeverity(wokeMax), config.volume); state.lastAlarmTs = now; }
-        if (config.notificationsEnabled && !(inMeeting && config.meetSuppressNotif)) {
+        if (config.soundEnabled && !suppressSound) { playSound(soundForSeverity(wokeMax), config.volume); state.lastAlarmTs = now; }
+        if (config.notificationsEnabled && !suppressNotif) {
           woke.sort((a, b) => Number(b.severity) - Number(a.severity));
           woke.slice(0, MAX_NOTIFS_PER_POLL).forEach(p => notify(p, baseFor(p._instId)));
         }
@@ -380,9 +467,9 @@ async function _pollZabbixOnce() {
       const gap = Math.max(MIN_POLL_SEC, Number(config.repeatInterval) || 60) * 1000;
       if (nagPool.length && (now - (state.lastAlarmTs || 0)) >= gap) {
         const nagMax = nagPool.reduce((m, p) => Math.max(m, Number(p.severity)), 0);
-        if (config.soundEnabled && !(inMeeting && config.meetSuppressSound)) playSound(soundForSeverity(nagMax), config.volume);
+        if (config.soundEnabled && !suppressSound) playSound(soundForSeverity(nagMax), config.volume);
         // re-notifica o problema de maior severidade com id FIXO -> atualiza no lugar (sem flood)
-        if (config.notificationsEnabled && config.nagNotify && !(inMeeting && config.meetSuppressNotif)) {
+        if (config.notificationsEnabled && config.nagNotify && !suppressNotif) {
           const top = nagPool.find(p => Number(p.severity) === nagMax) || nagPool[0];
           notify(top, baseFor(top._instId), 'zbx-nag');
         }
@@ -393,8 +480,8 @@ async function _pollZabbixOnce() {
     }
   }
 
-  // RESOLVIDOS
-  if (config.notifyResolved && config.notificationsEnabled && allResolved.length) {
+  // RESOLVIDOS (fora do Working time tambem ficam em silencio)
+  if (config.notifyResolved && config.notificationsEnabled && !offHours && allResolved.length) {
     allResolved.slice(0, MAX_NOTIFS_PER_POLL).forEach(p => notifyResolved(p, baseFor(p.instId)));
   }
 }
@@ -611,10 +698,14 @@ async function ensureOffscreen() {
 }
 
 async function playSound(preset, volume) {
+  // 0 e um volume valido (mudo) - nao pode virar 0.8 por ser falsy. So o ausente/invalido usa o default.
+  const v = Number(volume);
+  const vol = Number.isFinite(v) ? Math.max(0, Math.min(1, v)) : 0.8;
+  if (vol <= 0) return; // volume 0% = mudo de verdade (nem acorda o offscreen)
   await ensureOffscreen();
   // .catch: mesma rejeicao benigna do setInterval acima ("Receiving end does not exist") se o
   // offscreen morreu entre o ensureOffscreen e o envio - so engole pra nao virar erro nao tratado.
-  chrome.runtime.sendMessage({ target: 'offscreen', type: 'play', preset: preset || 'beep', volume: Number(volume) || 0.8 }).catch(() => {});
+  chrome.runtime.sendMessage({ target: 'offscreen', type: 'play', preset: preset || 'beep', volume: vol }).catch(() => {});
 }
 
 // =====================================================
@@ -626,7 +717,9 @@ function scheduleAlarm() {
   chrome.alarms.create('poll', { periodInMinutes: 1, delayInMinutes: 0.05 });
 }
 
-chrome.alarms.onAlarm.addListener((a) => { if (a.name === 'poll') pollZabbix(); });
+// Alem do poll, re-arma o heartbeat do offscreen: o Chrome destroi o documento offscreen apos
+// ~30s sem audio, matando o timer <30s em silencio - sem isto o ritmo cairia pra 1min pra sempre.
+chrome.alarms.onAlarm.addListener((a) => { if (a.name === 'poll') { startOffscreenTimer(); pollZabbix(); } });
 
 // Mantem um offscreen vivo com um setInterval que "cutuca" o background no intervalo
 // configurado (o service worker dorme; o offscreen nao) -> permite checar < 30s.
@@ -670,6 +763,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     Object.keys(state.instStatus).forEach(id => { if (!validIds.has(id)) delete state.instStatus[id]; });
     Object.keys(state.authModes).forEach(id => { if (!validIds.has(id)) delete state.authModes[id]; });
     Object.keys(state.groupCache).forEach(id => { if (!validIds.has(id)) delete state.groupCache[id]; });
+    state.workPeriodCache = {}; // re-le o work_period apos mudanca de config (instancias/opcao)
     state.initialized = false; // re-baseline: nao floodar com o que ja existe
     state.lastAlarmTs = 0;
     scheduleAlarm();
@@ -680,6 +774,10 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
   if (msg.action === 'getStatus') {
     sendResponse({ status: state.status, muted: config.muted });
+    // status velho (SW acordou agora / 1o poll falhou com a rede subindo) -> ja dispara um poll;
+    // o popup tambem re-consulta sozinho quando percebe que o status esta vencido.
+    const staleMs = Math.max(MIN_POLL_SEC, Number(config.pollInterval) || 15) * 2 * 1000;
+    if (!state.status.ts || (Date.now() - state.status.ts) > staleMs) pollZabbix();
     // abrir o popup = "vi os problemas atuais" -> zera o badge de nao-vistos
     state.lastSeenTs = Date.now();
     chrome.storage.local.set({ lastSeenTs: state.lastSeenTs });
@@ -699,22 +797,21 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return;
   }
 
-  if (msg.action === 'testSound') {
-    playSound(msg.preset || 'beep', msg.volume ?? config.volume);
-    sendResponse({ ok: true });
-    return;
+  if (msg.action === 'getWorkPeriod') {
+    // usado pela pagina de opcoes pra validar se o Working time do servidor e legivel
+    // (habilita/desabilita o checkbox workingTimeOnly e mostra o periodo lido)
+    (async () => {
+      // sem cache: a pagina de opcoes quer o estado REAL agora (o cache de 10min fica pro poll)
+      state.workPeriodCache = {};
+      const { list, error } = await getWorkPeriods(enabledInstances(config));
+      if (list.length) sendResponse({ ok: true, list });
+      else sendResponse({ ok: false, error });
+    })();
+    return true;
   }
 
-  if (msg.action === 'testAlert') {
-    // som + notificacao de exemplo (pra ver "subindo" no navegador)
-    playSound(msg.preset || config.soundSev4 || 'siren', msg.volume ?? config.volume);
-    const id = 'zbx-test-' + Date.now();
-    chrome.notifications.create(id, {
-      type: 'basic', iconUrl: 'icons/icon128.png',
-      title: t('n_test_title', resolveLang(config.lang)), message: t('n_test_msg', resolveLang(config.lang)),
-      contextMessage: 'Zabbix NOC Alerter - ' + t('n_test_ctx', resolveLang(config.lang)),
-      priority: 2, requireInteraction: false
-    });
+  if (msg.action === 'testSound') {
+    playSound(msg.preset || 'beep', msg.volume ?? config.volume);
     sendResponse({ ok: true });
     return;
   }

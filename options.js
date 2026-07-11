@@ -11,7 +11,7 @@ const SOUNDS = [
 const MAX_INSTANCES = 8;
 const NUM = ['pollInterval', 'repeatInterval'];
 const SEL = ['minSeverity', 'soundSev5', 'soundSev4', 'soundSev3', 'soundSev2', 'soundSev1'];
-const CHK = ['soundEnabled', 'notificationsEnabled', 'notifyResolved', 'badgeUnseen', 'repeatAlarm', 'nagNotify', 'suppressDuringMeeting', 'meetSuppressNotif', 'meetSuppressSound', 'ignoreAckd', 'ignoreSuppressed', 'ignoreMaintenance'];
+const CHK = ['soundEnabled', 'notificationsEnabled', 'notifyResolved', 'badgeUnseen', 'repeatAlarm', 'nagNotify', 'suppressDuringMeeting', 'meetSuppressNotif', 'meetSuppressSound', 'workingTimeOnly', 'ignoreAckd', 'ignoreSuppressed', 'ignoreMaintenance'];
 
 let currentLang = 'pt';
 
@@ -47,6 +47,9 @@ document.addEventListener('DOMContentLoaded', () => {
   const syncMeetSub = () => {
     const on = document.getElementById('suppressDuringMeeting').checked;
     document.getElementById('meetSubOptions').classList.toggle('hidden', !on);
+    // ligar o modo reuniao com as duas sub-opcoes desmarcadas seria um no-op -> marca as duas
+    const notif = document.getElementById('meetSuppressNotif'), sound = document.getElementById('meetSuppressSound');
+    if (on && !notif.checked && !sound.checked) { notif.checked = true; sound.checked = true; }
   };
   document.getElementById('suppressDuringMeeting').addEventListener('change', syncMeetSub);
 
@@ -57,6 +60,26 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   });
 });
+
+// Valida se o Working time do servidor e legivel pela API. Se nao for (sem instancia,
+// sem permissao no settings.get, Zabbix < 6.0), desativa o checkbox: a opcao nao teria efeito.
+function checkWorkPeriod() {
+  const chk = document.getElementById('workingTimeOnly');
+  const st = document.getElementById('workTimeStatus');
+  st.textContent = t('testing', currentLang);
+  chrome.runtime.sendMessage({ action: 'getWorkPeriod' }, (r) => {
+    if (r?.ok) {
+      chk.disabled = false;
+      // um item por instancia legivel: "1-5,09:00-18:00 (PRD), 1-5,08:00-17:00 (HML)"
+      st.textContent = t('work_time_srv', currentLang) +
+        (r.list || []).map(i => (i.period || '-') + (i.label ? ' (' + i.label + ')' : '')).join(', ');
+    } else {
+      chk.disabled = true;
+      chk.checked = false;
+      st.textContent = t('work_time_na', currentLang) + (r?.error ? ' [' + r.error + ']' : '');
+    }
+  });
+}
 
 function updateVolLabel() {
   const pct = Math.round(parseFloat(document.getElementById('volume').value) * 100) + '%';
@@ -236,6 +259,7 @@ function loadSettings() {
     document.getElementById('maxAgeDays').value = c.maxAgeDays ?? 0;
     document.getElementById('excludePatterns').value = c.excludePatterns || '';
     updateVolLabel();
+    checkWorkPeriod(); // depois de aplicar o config: valida/desativa o checkbox de working time
   });
 }
 
@@ -260,6 +284,7 @@ function saveSettings() {
 
   chrome.runtime.sendMessage({ action: 'setConfig', config: cfg }, () => {
     showAlert(t('saved', cfg.lang), 'success');
+    checkWorkPeriod(); // instancias podem ter mudado -> revalida o working time
   });
 }
 
@@ -269,7 +294,8 @@ function resetSettings() {
     instances: [], excludePatterns: '', maxAgeDays: 0, pollInterval: 15, repeatAlarm: true, nagNotify: true, repeatInterval: 60,
     minSeverity: 4, soundEnabled: true, notificationsEnabled: true, notifyResolved: true, volume: 0.8,
     soundSev5: 'klaxon', soundSev4: 'siren', soundSev3: 'pulse', soundSev2: 'beepbeep', soundSev1: 'chime',
-    ignoreAckd: false, ignoreSuppressed: true, ignoreMaintenance: true, badgeUnseen: false, muted: false, lang: currentLang
+    ignoreAckd: false, ignoreSuppressed: true, ignoreMaintenance: true, badgeUnseen: false, muted: false,
+    suppressDuringMeeting: true, meetSuppressNotif: true, meetSuppressSound: true, workingTimeOnly: false, lang: currentLang
   };
   chrome.runtime.sendMessage({ action: 'setConfig', config: defaults }, () => {
     loadSettings();

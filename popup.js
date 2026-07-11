@@ -16,9 +16,6 @@ document.addEventListener('DOMContentLoaded', () => {
     setStatusText(t('checking', lang));
     chrome.runtime.sendMessage({ action: 'pollNow' }, () => load());
   });
-  document.getElementById('testBtn').addEventListener('click', () => {
-    chrome.runtime.sendMessage({ action: 'testAlert', preset: cfg.soundSev4 || 'siren', volume: cfg.volume ?? 0.8 });
-  });
   document.getElementById('muteBtn').addEventListener('click', toggleMute);
   const fb = document.getElementById('filterBox');
   fb.addEventListener('input', applyFilter);
@@ -39,7 +36,16 @@ function load() {
     lang = resolveLang(cfg.lang);
     applyI18n(lang);
     renderMute();
-    chrome.runtime.sendMessage({ action: 'getStatus' }, (s) => render(s?.status || {}));
+    chrome.runtime.sendMessage({ action: 'getStatus' }, (s) => {
+      render(s?.status || {});
+      // status vencido (navegador recem-aberto, service worker dormiu, 1o poll falhou):
+      // re-consulta sozinho em vez de esperar o usuario clicar em "checar agora".
+      const ts = s?.status?.ts || 0;
+      const staleMs = Math.max(5, Number(cfg.pollInterval) || 15) * 2 * 1000;
+      if (Date.now() - ts > staleMs) {
+        chrome.runtime.sendMessage({ action: 'pollNow' }, (r) => { if (r?.status) render(r.status); });
+      }
+    });
   });
 }
 
