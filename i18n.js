@@ -48,11 +48,18 @@ const I18N = {
     confirm: 'Confirmar', cancel: 'Cancelar', open_problem: 'Clique para abrir no Zabbix',
     snz_do: 'Adiar (snooze)', snz_wake: 'Acordar',
     inst_label: 'Rótulo', inst_label_ph: 'Ex.: PRD, HML, Filial',
-    inst_url: 'URL do Zabbix', inst_token: 'Token de API (opcional)',
+    inst_url: 'URL do Zabbix', inst_token: 'Token de API',
     inst_enabled: 'Ativa', inst_add: 'Adicionar instância', inst_remove: 'Remover',
-    inst_section: 'Instâncias do Zabbix', inst_desc: 'Configure até 8 instâncias independentes. Cada uma pode usar sessão do navegador ou token.',
+    inst_section: 'Instâncias do Zabbix', inst_desc: 'Configure até 8 instâncias independentes. Cada uma pode usar a sessão do navegador, token de API ou usuário e senha.',
     inst_test: 'Testar', inst_empty: 'Nenhuma instância configurada.', inst_toggle: 'Expandir / recolher',
-    inst_groups: 'Host groups (opcional)', inst_groups_ph: 'Ex.: Linux servers, Rede', inst_groups_desc: 'Vazio = todos. Filtra no servidor por groupids; nomes exatos, separados por vírgula.'
+    inst_groups: 'Host groups (opcional)', inst_groups_ph: 'Ex.: Linux servers, Rede', inst_groups_desc: 'Vazio = todos. Filtra no servidor por groupids; nomes exatos, separados por vírgula.',
+    inst_auth: 'Autenticação',
+    auth_session: 'Sem autenticação (sessão do navegador)', auth_token: 'Token de API', auth_password: 'Usuário e senha',
+    auth_session_d: 'Usa o cookie da sessão logada no navegador - você precisa estar logado no Zabbix nesta máquina.',
+    auth_token_d: 'Token de API gerado no Zabbix (Usuário > Tokens de API).',
+    auth_password_d: 'Faz login na API com usuário e senha (a senha fica salva no navegador e não é exportada).',
+    inst_user: 'Usuário', inst_user_ph: 'Ex.: noc.alerts', inst_pass: 'Senha',
+    via_password: 'usuário/senha'
   },
   en: {
     conn: 'Connection', zurl: 'Zabbix URL', zurl_ph: 'https://zabbix.yourcompany.com',
@@ -98,11 +105,18 @@ const I18N = {
     confirm: 'Confirm', cancel: 'Cancel', open_problem: 'Click to open in Zabbix',
     snz_do: 'Snooze', snz_wake: 'Wake',
     inst_label: 'Label', inst_label_ph: 'E.g.: PRD, STG, Branch',
-    inst_url: 'Zabbix URL', inst_token: 'API token (optional)',
+    inst_url: 'Zabbix URL', inst_token: 'API token',
     inst_enabled: 'Enabled', inst_add: 'Add instance', inst_remove: 'Remove',
-    inst_section: 'Zabbix Instances', inst_desc: 'Configure up to 8 independent instances. Each can use browser session or token.',
+    inst_section: 'Zabbix Instances', inst_desc: 'Configure up to 8 independent instances. Each can use the browser session, an API token, or username and password.',
     inst_test: 'Test', inst_empty: 'No instances configured.', inst_toggle: 'Expand / collapse',
-    inst_groups: 'Host groups (optional)', inst_groups_ph: 'E.g.: Linux servers, Network', inst_groups_desc: 'Empty = all. Filters on the server by groupids; exact names, comma-separated.'
+    inst_groups: 'Host groups (optional)', inst_groups_ph: 'E.g.: Linux servers, Network', inst_groups_desc: 'Empty = all. Filters on the server by groupids; exact names, comma-separated.',
+    inst_auth: 'Authentication',
+    auth_session: 'No authentication (browser session)', auth_token: 'API token', auth_password: 'Username and password',
+    auth_session_d: 'Uses the logged-in browser session cookie - you must be logged into Zabbix on this machine.',
+    auth_token_d: 'API token generated in Zabbix (User > API tokens).',
+    auth_password_d: 'Logs into the API with username and password (the password is stored in the browser and never exported).',
+    inst_user: 'Username', inst_user_ph: 'E.g.: noc.alerts', inst_pass: 'Password',
+    via_password: 'user/password'
   },
   es: {
     conn: 'Conexión', zurl: 'URL de Zabbix', zurl_ph: 'https://zabbix.tuempresa.com',
@@ -148,11 +162,18 @@ const I18N = {
     confirm: 'Confirmar', cancel: 'Cancelar', open_problem: 'Clic para abrir en Zabbix',
     snz_do: 'Posponer (snooze)', snz_wake: 'Despertar',
     inst_label: 'Etiqueta', inst_label_ph: 'Ej.: PRD, HML, Sucursal',
-    inst_url: 'URL de Zabbix', inst_token: 'Token de API (opcional)',
+    inst_url: 'URL de Zabbix', inst_token: 'Token de API',
     inst_enabled: 'Activa', inst_add: 'Agregar instancia', inst_remove: 'Eliminar',
-    inst_section: 'Instancias de Zabbix', inst_desc: 'Configure hasta 8 instancias independientes. Cada una puede usar sesión del navegador o token.',
+    inst_section: 'Instancias de Zabbix', inst_desc: 'Configure hasta 8 instancias independientes. Cada una puede usar la sesión del navegador, token de API o usuario y contraseña.',
     inst_test: 'Probar', inst_empty: 'Sin instancias configuradas.', inst_toggle: 'Expandir / contraer',
-    inst_groups: 'Grupos de hosts (opcional)', inst_groups_ph: 'Ej.: Linux servers, Red', inst_groups_desc: 'Vacío = todos. Filtra en el servidor por groupids; nombres exactos, separados por coma.'
+    inst_groups: 'Grupos de hosts (opcional)', inst_groups_ph: 'Ej.: Linux servers, Red', inst_groups_desc: 'Vacío = todos. Filtra en el servidor por groupids; nombres exactos, separados por coma.',
+    inst_auth: 'Autenticación',
+    auth_session: 'Sin autenticación (sesión del navegador)', auth_token: 'Token de API', auth_password: 'Usuario y contraseña',
+    auth_session_d: 'Usa la cookie de la sesión del navegador - debes estar logueado en Zabbix en esta máquina.',
+    auth_token_d: 'Token de API generado en Zabbix (Usuario > Tokens de API).',
+    auth_password_d: 'Inicia sesión en la API con usuario y contraseña (la contraseña se guarda en el navegador y no se exporta).',
+    inst_user: 'Usuario', inst_user_ph: 'Ej.: noc.alerts', inst_pass: 'Contraseña',
+    via_password: 'usuario/contraseña'
   }
 };
 

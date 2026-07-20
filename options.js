@@ -38,6 +38,7 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('lang').addEventListener('change', (e) => {
     currentLang = e.target.value;
     applyI18n(currentLang);
+    refreshDynamicI18n();
     chrome.runtime.sendMessage({ action: 'setConfig', config: { lang: currentLang } });
   });
 
@@ -81,6 +82,16 @@ function checkWorkPeriod() {
   });
 }
 
+// Textos que dependem de estado (fora do alcance do applyI18n): o titulo "Rotulo N"
+// dos cards sem rotulo e a linha de status do working time (re-lida no idioma novo).
+function refreshDynamicI18n() {
+  document.querySelectorAll('#instancesContainer .inst-card').forEach(card => {
+    const titleEl = card.querySelector('.inst-title');
+    if (titleEl.classList.contains('empty')) titleEl.textContent = instCardTitle(card);
+  });
+  checkWorkPeriod();
+}
+
 function updateVolLabel() {
   const pct = Math.round(parseFloat(document.getElementById('volume').value) * 100) + '%';
   document.getElementById('volLabel').textContent = pct;
@@ -94,7 +105,7 @@ function renderInstances(instances) {
   const container = document.getElementById('instancesContainer');
   container.innerHTML = '';
   if (!instances || !instances.length) {
-    container.innerHTML = `<div class="inst-empty-state">${esc(t('inst_empty', currentLang))}</div>`;
+    container.innerHTML = `<div class="inst-empty-state" data-i18n="inst_empty">${esc(t('inst_empty', currentLang))}</div>`;
   } else {
     instances.forEach((inst, idx) => {
       const card = createInstanceCard(inst, idx);
@@ -112,11 +123,24 @@ function instCardTitle(card) {
   return t('inst_label', currentLang) + ' ' + (Number(card.dataset.idx) + 1);
 }
 
+// Mostra so os campos do modo de autenticacao escolhido e troca a descricao do seletor.
+function syncAuthFields(card) {
+  const mode = card.querySelector('.inst-auth').value;
+  const desc = card.querySelector('.inst-auth-desc');
+  desc.setAttribute('data-i18n', 'auth_' + mode + '_d'); // troca de idioma re-traduz via applyI18n
+  desc.textContent = t('auth_' + mode + '_d', currentLang);
+  card.querySelector('.inst-field-token').style.display = mode === 'token' ? '' : 'none';
+  card.querySelector('.inst-field-user').style.display = mode === 'password' ? '' : 'none';
+  card.querySelector('.inst-field-pass').style.display = mode === 'password' ? '' : 'none';
+}
+
 function createInstanceCard(inst, idx) {
   const card = document.createElement('div');
   card.className = 'inst-card' + (inst.enabled ? '' : ' disabled');
   card.dataset.idx = idx;
   const hasLabel = (inst.label || '').trim();
+  // configs antigas (sem authType): token preenchido = token, vazio = sessao
+  const authType = inst.authType || ((inst.token || '').trim() ? 'token' : 'session');
   card.innerHTML = `
     <div class="inst-header">
       <button type="button" class="inst-toggle" data-i18n-title="inst_toggle" data-i18n-aria="inst_toggle" title="${esc(t('inst_toggle', currentLang))}">&#x25BE;</button>
@@ -124,31 +148,48 @@ function createInstanceCard(inst, idx) {
       <span class="inst-title${hasLabel ? '' : ' empty'}">${esc(hasLabel || (t('inst_label', currentLang) + ' ' + (idx + 1)))}</span>
       <label class="check inst-enabled-wrap">
         <input type="checkbox" class="inst-enabled" ${inst.enabled ? 'checked' : ''}>
-        <span>${esc(t('inst_enabled', currentLang))}</span>
+        <span data-i18n="inst_enabled">${esc(t('inst_enabled', currentLang))}</span>
       </label>
     </div>
     <div class="inst-body">
       <div class="inst-field">
-        <label>${esc(t('inst_label', currentLang))}</label>
-        <input type="text" class="inst-label-input" value="${esc(inst.label || '')}" placeholder="${esc(t('inst_label_ph', currentLang))}" maxlength="20">
+        <label data-i18n="inst_label">${esc(t('inst_label', currentLang))}</label>
+        <input type="text" class="inst-label-input" value="${esc(inst.label || '')}" data-i18n-ph="inst_label_ph" placeholder="${esc(t('inst_label_ph', currentLang))}" maxlength="20">
       </div>
       <div class="inst-field">
-        <label>${esc(t('inst_url', currentLang))}</label>
+        <label data-i18n="inst_url">${esc(t('inst_url', currentLang))}</label>
         <input type="text" class="inst-url" value="${esc(inst.url || '')}" placeholder="https://zabbix.empresa.com" autocomplete="off">
       </div>
       <div class="inst-field">
-        <label>${esc(t('inst_token', currentLang))}</label>
-        <input type="password" class="inst-token" value="${esc(inst.token || '')}" placeholder="${esc(t('token_ph', currentLang))}" autocomplete="off">
+        <label data-i18n="inst_auth">${esc(t('inst_auth', currentLang))}</label>
+        <select class="inst-auth">
+          <option value="session"${authType === 'session' ? ' selected' : ''} data-i18n="auth_session">${esc(t('auth_session', currentLang))}</option>
+          <option value="token"${authType === 'token' ? ' selected' : ''} data-i18n="auth_token">${esc(t('auth_token', currentLang))}</option>
+          <option value="password"${authType === 'password' ? ' selected' : ''} data-i18n="auth_password">${esc(t('auth_password', currentLang))}</option>
+        </select>
+        <div class="desc inst-auth-desc"></div>
+      </div>
+      <div class="inst-field inst-field-token">
+        <label data-i18n="inst_token">${esc(t('inst_token', currentLang))}</label>
+        <input type="password" class="inst-token" value="${esc(inst.token || '')}" autocomplete="off">
+      </div>
+      <div class="inst-field inst-field-user">
+        <label data-i18n="inst_user">${esc(t('inst_user', currentLang))}</label>
+        <input type="text" class="inst-user" value="${esc(inst.username || '')}" data-i18n-ph="inst_user_ph" placeholder="${esc(t('inst_user_ph', currentLang))}" autocomplete="off">
+      </div>
+      <div class="inst-field inst-field-pass">
+        <label data-i18n="inst_pass">${esc(t('inst_pass', currentLang))}</label>
+        <input type="password" class="inst-pass" value="${esc(inst.password || '')}" autocomplete="new-password">
       </div>
       <div class="inst-field">
-        <label>${esc(t('inst_groups', currentLang))}</label>
-        <input type="text" class="inst-groups" value="${esc(inst.hostGroups || '')}" placeholder="${esc(t('inst_groups_ph', currentLang))}" autocomplete="off">
-        <div class="desc">${esc(t('inst_groups_desc', currentLang))}</div>
+        <label data-i18n="inst_groups">${esc(t('inst_groups', currentLang))}</label>
+        <input type="text" class="inst-groups" value="${esc(inst.hostGroups || '')}" data-i18n-ph="inst_groups_ph" placeholder="${esc(t('inst_groups_ph', currentLang))}" autocomplete="off">
+        <div class="desc" data-i18n="inst_groups_desc">${esc(t('inst_groups_desc', currentLang))}</div>
       </div>
       <div class="inst-actions">
-        <button class="btn-test inst-test-btn">${esc(t('inst_test', currentLang))}</button>
+        <button class="btn-test inst-test-btn" data-i18n="inst_test">${esc(t('inst_test', currentLang))}</button>
         <span class="inst-status"></span>
-        <button class="btn-danger inst-remove-btn">${esc(t('inst_remove', currentLang))}</button>
+        <button class="btn-danger inst-remove-btn" data-i18n="inst_remove">${esc(t('inst_remove', currentLang))}</button>
       </div>
     </div>`;
 
@@ -166,6 +207,8 @@ function createInstanceCard(inst, idx) {
     titleEl.textContent = v || instCardTitle(card);
     titleEl.classList.toggle('empty', !v);
   });
+  card.querySelector('.inst-auth').addEventListener('change', () => syncAuthFields(card));
+  syncAuthFields(card);
   card.querySelector('.inst-test-btn').addEventListener('click', () => testInstance(card));
   card.querySelector('.inst-remove-btn').addEventListener('click', () => removeInstance(card));
   return card;
@@ -178,7 +221,7 @@ function addInstance() {
   const current = container.querySelectorAll('.inst-card').length;
   if (current >= MAX_INSTANCES) return;
   const idx = current;
-  const inst = { id: 'inst' + (Date.now() % 100000), label: '', url: '', token: '', enabled: true };
+  const inst = { id: 'inst' + (Date.now() % 100000), label: '', url: '', authType: 'session', token: '', username: '', password: '', enabled: true };
   container.appendChild(createInstanceCard(inst, idx)); // novo card ja vem expandido
   // atualizar visibilidade do botao
   document.getElementById('addInstanceBtn').style.display = (idx + 1) >= MAX_INSTANCES ? 'none' : '';
@@ -201,13 +244,18 @@ function removeInstance(card) {
 
 function testInstance(card) {
   const url = card.querySelector('.inst-url').value.trim();
-  const token = card.querySelector('.inst-token').value.trim();
+  const authType = card.querySelector('.inst-auth').value;
   const statusEl = card.querySelector('.inst-status');
   if (!url) { statusEl.textContent = '\u2718 ' + t('e_nourl', currentLang); statusEl.style.color = '#ff8a8a'; return; }
   statusEl.textContent = t('testing', currentLang); statusEl.style.color = '';
-  chrome.runtime.sendMessage({ action: 'testConnection', zabbixUrl: url, apiToken: token, instId: 'test' }, (r) => {
+  chrome.runtime.sendMessage({
+    action: 'testConnection', zabbixUrl: url, instId: 'test', authType,
+    apiToken: card.querySelector('.inst-token').value.trim(),
+    username: card.querySelector('.inst-user').value.trim(),
+    password: card.querySelector('.inst-pass').value
+  }, (r) => {
     if (r?.ok) {
-      const via = r.via === 'token' ? t('via_token', currentLang) : t('via_session', currentLang);
+      const via = t('via_' + (r.via || 'session'), currentLang);
       const v = r.version ? ` (v${r.version})` : '';
       statusEl.textContent = '\u2713 ' + via + v;
       statusEl.style.color = '#22c55e';
@@ -229,7 +277,11 @@ function collectInstances() {
       id: 'inst' + (idx + 1),
       label: card.querySelector('.inst-label-input').value.trim() || ('Zabbix ' + (idx + 1)),
       url: card.querySelector('.inst-url').value.trim(),
+      authType: card.querySelector('.inst-auth').value,
+      // guarda os 3 conjuntos de credenciais (trocar de modo nao apaga o que foi digitado)
       token: card.querySelector('.inst-token').value.trim(),
+      username: card.querySelector('.inst-user').value.trim(),
+      password: card.querySelector('.inst-pass').value,
       hostGroups: card.querySelector('.inst-groups').value.trim(),
       enabled: card.querySelector('.inst-enabled').checked
     });
@@ -308,8 +360,8 @@ function exportSettings() {
     const cfg = { ...(r?.config || {}) };
     delete cfg.apiToken; // legado: nao exporta o segredo
     delete cfg.muted;    // estado transitorio
-    // multi-instancia: nao exporta os tokens das instancias (segredo)
-    if (Array.isArray(cfg.instances)) cfg.instances = cfg.instances.map(i => ({ ...i, token: '' }));
+    // multi-instancia: nao exporta os tokens nem as senhas das instancias (segredo)
+    if (Array.isArray(cfg.instances)) cfg.instances = cfg.instances.map(i => ({ ...i, token: '', password: '' }));
     const blob = new Blob([JSON.stringify(cfg, null, 2)], { type: 'application/json' });
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);

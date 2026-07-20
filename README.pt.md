@@ -30,7 +30,8 @@ notificação, direto no navegador, enquanto você trabalha em qualquer outra co
 
 ## Recursos
 
-- 🛰️ **Multi-instância:** monitore até 8 servidores Zabbix independentes ao mesmo tempo, cada um com sua URL e token opcional; cada problema mostra um badge da instância.
+- 🛰️ **Multi-instância:** monitore até 8 servidores Zabbix independentes ao mesmo tempo, cada um com sua URL e autenticação; cada problema mostra um badge da instância.
+- 🔑 **Três modos de autenticação por instância:** sessão do navegador (sem credencial), token de API, ou usuário e senha (a extensão faz o login e renova a sessão sozinha).
 - 🔊 **Som por severidade** com volume e botão de teste.
 - 🔁 **Re-alarme** (som e notificação) enquanto houver problema não reconhecido, até dar ack ou mudo.
 - 📅 **Alertar só no horário de trabalho:** lê o Working time do seu servidor Zabbix e fica em silêncio fora dele (lista e badge continuam atualizando).
@@ -43,9 +44,9 @@ notificação, direto no navegador, enquanto você trabalha em qualquer outra co
 - 🟢 **Notificação de resolvido** quando um problema recupera.
 - 🖱️ **Clique no problema** abre o evento exato no Zabbix.
 - 🔎 **Filtros:** severidade mínima, idade máxima, **host groups**, excluir por texto, esconder suprimidos/ackados/em manutenção; badge "não vistos" opcional.
-- 💾 **Backup:** exportar e importar configurações em JSON (os tokens das instâncias nunca são exportados).
+- 💾 **Backup:** exportar e importar configurações em JSON (tokens e senhas das instâncias nunca são exportados).
 - 🌐 **Idiomas:** English, Português, Español, escolhido automaticamente pelo navegador.
-- 🔒 **Nada hardcoded:** as URLs do Zabbix (e tokens opcionais) ficam só nas opções.
+- 🔒 **Nada hardcoded:** as URLs do Zabbix (e as credenciais) ficam só nas opções.
 
 ## Instalação
 
@@ -57,22 +58,27 @@ notificação, direto no navegador, enquanto você trabalha em qualquer outra co
 
 1. Baixe o [release](https://github.com/opastorello/zabbix-noc-alerter/releases/latest) mais recente e descompacte (ou clone este repositório).
 2. Abra `chrome://extensions`, ligue o **Developer mode**, clique em **Load unpacked** e selecione a pasta.
-3. Abra as **opções** da extensão e adicione uma instância do Zabbix (URL, token opcional).
-4. Mantenha uma aba do Zabbix logada. É só isso.
+3. Abra as **opções** da extensão e adicione uma instância do Zabbix (URL e a forma de autenticação).
+4. Se escolheu o modo sessão do navegador, mantenha uma aba do Zabbix logada. É só isso.
 
 ## Como funciona
 
-A extensão lê o cookie de sessão da aba do Zabbix em que você já está logado e
-consulta a API por problemas ativos. Um problema novo toca um som e sobe uma
-notificação. Token não é necessário; se a sua versão não aceitar a sessão do
-frontend para escrita (ack), defina um token de API nas opções como alternativa.
+A extensão consulta a API do Zabbix por problemas ativos; um problema novo toca um
+som e sobe uma notificação. Cada instância autentica de uma de três formas,
+escolhida nas opções:
+
+- **Sem autenticação (sessão do navegador):** lê o cookie de sessão da aba do Zabbix em que você já está logado. Nada para configurar; basta manter uma aba logada.
+- **Token de API:** um token gerado no Zabbix (Usuário > Tokens de API). Funciona sem aba do Zabbix aberta e sobrevive ao logout do frontend.
+- **Usuário e senha:** a extensão faz login na API (`user.login`) e renova a sessão sozinha quando ela expira.
 
 **Compatibilidade:** testado no Zabbix 6.0 a 7.4 (a sessão do frontend e todas as chamadas de API funcionam). O Zabbix 8.0 será validado quando sair em versão estável.
 
 ## Privacidade
 
 Só fala com **o seu Zabbix** (a URL que você configurou) e lê o cookie de sessão
-localmente. Sem analytics, sem telemetria, sem URL ou token embutidos no código.
+localmente. As credenciais (token ou usuário/senha) ficam só no seu navegador e
+nunca são exportadas. Sem analytics, sem telemetria, sem URL ou credencial
+embutida no código.
 
 ## Capturas de tela
 

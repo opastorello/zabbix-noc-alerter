@@ -116,7 +116,7 @@ function buildInstInfo(instStatus) {
   const entries = Object.values(instStatus).filter(s => s && s.label);
   if (entries.length <= 1) {
     const e = entries[0];
-    return e ? `(${e.via === 'token' ? t('via_token', lang) : t('via_session', lang)})` : '';
+    return e ? `(${t('via_' + (e.via || 'session'), lang)})` : '';
   }
   // multi: mostra quantas OK
   const ok = entries.filter(e => e.state === 'ok').length;

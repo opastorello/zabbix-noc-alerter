@@ -1,11 +1,12 @@
 // Zabbix NOC Alerter - Background Service Worker
-// Le os problemas do Zabbix usando a SESSAO ABERTA do navegador (cookie zbx_session),
-// ou um token opcional. Toca som + notificacao quando surge problema novo.
-// NADA hardcoded: a URL e o token vivem so nas opcoes (chrome.storage.local).
+// Le os problemas do Zabbix autenticando por instancia: SESSAO ABERTA do navegador
+// (cookie zbx_session), token de API, ou usuario/senha (user.login com sessionid cacheado).
+// Toca som + notificacao quando surge problema novo.
+// NADA hardcoded: a URL e as credenciais vivem so nas opcoes (chrome.storage.local).
 
 importScripts('i18n.js'); // traducoes (I18N, t, resolveLang) tambem no service worker
 
-const DEFAULT_INSTANCE = { id: '', label: '', url: '', token: '', enabled: true, hostGroups: '' };
+const DEFAULT_INSTANCE = { id: '', label: '', url: '', authType: 'session', token: '', username: '', password: '', enabled: true, hostGroups: '' };
 const MAX_INSTANCES = 8;
 
 const DEFAULT_CONFIG = {
@@ -41,13 +42,16 @@ const DEFAULT_CONFIG = {
 
 // Migra formato antigo (zabbixUrl/apiToken flat) para o novo (instances[])
 function migrateConfig(cfg) {
-  if (cfg.instances && cfg.instances.length) return cfg; // ja no formato novo
-  if (cfg.zabbixUrl) {
-    cfg.instances = [{ id: 'inst1', label: 'Zabbix', url: cfg.zabbixUrl, token: cfg.apiToken || '', enabled: true }];
-    delete cfg.zabbixUrl; delete cfg.apiToken;
-  } else {
-    cfg.instances = [];
+  if (!cfg.instances || !cfg.instances.length) {
+    if (cfg.zabbixUrl) {
+      cfg.instances = [{ id: 'inst1', label: 'Zabbix', url: cfg.zabbixUrl, token: cfg.apiToken || '', enabled: true }];
+      delete cfg.zabbixUrl; delete cfg.apiToken;
+    } else {
+      cfg.instances = [];
+    }
   }
+  // authType explicito: configs anteriores ao seletor derivam do token (preenchido = token, vazio = sessao)
+  cfg.instances = cfg.instances.map(i => i.authType ? i : { ...i, authType: (i.token && i.token.trim()) ? 'token' : 'session' });
   return cfg;
 }
 
@@ -96,6 +100,7 @@ let state = {
   lastSeenTs: 0,          // quando o popup foi aberto pela ultima vez (base do badge de 'nao vistos')
   snoozes: {},            // "instId:eventid" -> timestamp ate quando o problema fica em silencio (snooze individual)
   authModes: {},          // instId -> 'header' | 'body' = modo de auth por instancia (cache; evita 2x request no 6.x)
+  loginTokens: {},        // instId -> sessionid do user.login (modo usuario/senha; invalidado ao expirar)
   status: { state: 'unconfigured' },
   instStatus: {},         // instId -> {state, via, error, total, ...} status individual
   groupCache: {},         // instId -> {key, ids} cache da resolucao de host groups (nome -> groupid)
@@ -186,6 +191,46 @@ async function getSessionId(baseUrl) {
   return null;
 }
 
+// Erros do Zabbix que significam "credencial de sessao invalida/expirada"
+const AUTH_ERR_RE = /not authorized|session terminated|re-login|reauthorization|need to be logged/i;
+
+// Modo de autenticacao da instancia; configs antigas (sem authType) derivam do token.
+function instAuthType(inst) {
+  return inst.authType || ((inst.token && inst.token.trim()) ? 'token' : 'session');
+}
+
+// Login com usuario/senha (user.login). O sessionid retornado e cacheado por instancia e
+// reutilizado ate expirar (AUTH_ERR_RE no poll invalida e re-loga). Zabbix 5.4+ usa o
+// parametro 'username'; versoes antigas so aceitam 'user' -> tenta o novo e cai pro antigo.
+async function loginWithPassword(base, inst) {
+  const cached = state.loginTokens[inst.id];
+  if (cached) return cached;
+  const user = (inst.username || '').trim();
+  const pass = inst.password || '';
+  if (!user || !pass) return null;
+  let sid;
+  try {
+    sid = await apiCall(base, 'user.login', { username: user, password: pass }, null, inst.id);
+  } catch (e) {
+    // "unexpected parameter \"username\"" = Zabbix antigo -> re-tenta com 'user'
+    if (!/username/i.test(String((e && e.message) || e))) throw e;
+    sid = await apiCall(base, 'user.login', { user: user, password: pass }, null, inst.id);
+  }
+  if (typeof sid !== 'string' || !sid) throw new Error('user.login: resposta inesperada');
+  state.loginTokens[inst.id] = sid;
+  return sid;
+}
+
+// Resolve a credencial da instancia conforme o modo: token fixo, login usuario/senha
+// (sessionid cacheado) ou cookie da sessao aberta no navegador. token null = sem credencial.
+async function getInstAuth(inst) {
+  const base = normalizeUrl(inst.url);
+  const mode = instAuthType(inst);
+  if (mode === 'token') return { token: (inst.token || '').trim() || null, via: 'token' };
+  if (mode === 'password') return { token: await loginWithPassword(base, inst), via: 'password' };
+  return { token: await getSessionId(base), via: 'session' };
+}
+
 // Chamada JSON-RPC. Tenta header Bearer (Zabbix 7.0+) e cai pro body 'auth' (6.x).
 function errText(e, status) {
   if (e) return e.data || e.message || (typeof e === 'string' ? e : JSON.stringify(e));
@@ -207,8 +252,8 @@ async function apiCall(baseUrl, method, params, token, instId) {
     return { res, data };
   }
 
-  // apiinfo.version e metodo PUBLICO do Zabbix: DEVE ir sem auth (rejeita Authorization).
-  if (method === 'apiinfo.version') {
+  // apiinfo.version e user.login sao metodos PUBLICOS do Zabbix: DEVEM ir sem auth (rejeitam Authorization).
+  if (method === 'apiinfo.version' || method === 'user.login') {
     const r = await call('anon');
     if (r.data && !r.data.error) return r.data.result;
     throw new Error(errText(r.data && r.data.error, r.res.status));
@@ -297,7 +342,7 @@ async function readWorkPeriod(inst) {
   }
   try {
     const base = normalizeUrl(inst.url);
-    const token = (inst.token || '').trim() || await getSessionId(base);
+    const { token } = await getInstAuth(inst);
     if (!token) {
       const err = t('no_session', resolveLang(config.lang));
       state.workPeriodCache[inst.id] = { period: null, ts: Date.now(), err };
@@ -487,19 +532,26 @@ async function _pollZabbixOnce() {
 }
 
 // Poll de UMA instancia - retorna {active, fresh, resolved, currentMap, instStatus}
-async function _pollInstance(inst) {
+// _retried: ja re-logou uma vez neste poll (modo usuario/senha; evita loop de re-login)
+async function _pollInstance(inst, _retried) {
   const base = normalizeUrl(inst.url);
   if (!base) return null;
 
-  let token = (inst.token || '').trim();
-  let via = 'token';
+  let token, via;
+  try {
+    ({ token, via } = await getInstAuth(inst));
+  } catch (e) {
+    // user.login falhou (senha errada / API fora do ar)
+    const s = { state: 'error', via: 'password', error: String((e && e.message) || e), label: inst.label };
+    return { active: [], fresh: [], resolved: [], currentMap: new Map(), instStatus: s };
+  }
   if (!token) {
-    token = await getSessionId(base);
-    via = 'session';
-    if (!token) {
-      state.instStatus[inst.id] = { state: 'no-session', via, label: inst.label };
-      return { active: [], fresh: [], resolved: [], currentMap: new Map(), instStatus: { state: 'no-session', via, label: inst.label } };
-    }
+    // sessao: sem cookie -> "faca login"; usuario/senha ou token: campos vazios -> sem credencial
+    const s = via === 'session'
+      ? { state: 'no-session', via, label: inst.label }
+      : { state: 'error', via, error: t('e_nocred', resolveLang(config.lang)), label: inst.label };
+    state.instStatus[inst.id] = s;
+    return { active: [], fresh: [], resolved: [], currentMap: new Map(), instStatus: s };
   }
 
   let problems;
@@ -520,9 +572,14 @@ async function _pollInstance(inst) {
     problems = await apiCall(base, 'problem.get', pget, token, inst.id);
   } catch (e) {
     const emsg = String((e && e.message) || e);
-    if (via === 'session' && /not authorized|session terminated|re-login|reauthorization|need to be logged/i.test(emsg)) {
+    if (via === 'session' && AUTH_ERR_RE.test(emsg)) {
       const s = { state: 'no-session', via, label: inst.label };
       return { active: [], fresh: [], resolved: [], currentMap: new Map(), instStatus: s };
+    }
+    if (via === 'password' && !_retried && AUTH_ERR_RE.test(emsg)) {
+      // sessionid do user.login expirou -> descarta o cache e re-loga UMA vez no mesmo poll
+      delete state.loginTokens[inst.id];
+      return _pollInstance(inst, true);
     }
     const s = { state: 'error', via, error: emsg, label: inst.label };
     return { active: [], fresh: [], resolved: [], currentMap: new Map(), instStatus: s };
@@ -763,6 +820,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     Object.keys(state.instStatus).forEach(id => { if (!validIds.has(id)) delete state.instStatus[id]; });
     Object.keys(state.authModes).forEach(id => { if (!validIds.has(id)) delete state.authModes[id]; });
     Object.keys(state.groupCache).forEach(id => { if (!validIds.has(id)) delete state.groupCache[id]; });
+    state.loginTokens = {};     // credenciais podem ter mudado -> re-login no proximo poll
     state.workPeriodCache = {}; // re-le o work_period apos mudanca de config (instancias/opcao)
     state.initialized = false; // re-baseline: nao floodar com o que ja existe
     state.lastAlarmTs = 0;
@@ -818,12 +876,11 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
   if (msg.action === 'ackEvent') {
     (async () => {
+      const inst = (config.instances || []).find(i => i.id === msg.instId);
+      if (!inst) { sendResponse({ ok: false, error: 'Instance not found' }); return; }
       try {
-        const inst = (config.instances || []).find(i => i.id === msg.instId);
-        if (!inst) { sendResponse({ ok: false, error: 'Instance not found' }); return; }
         const base = normalizeUrl(inst.url);
-        let token = (inst.token || '').trim();
-        if (!token) token = await getSessionId(base);
+        const { token } = await getInstAuth(inst);
         if (!token) { sendResponse({ ok: false, error: t('e_nocred', resolveLang(config.lang)) }); return; }
         const r = await apiCall(base, 'event.acknowledge', {
           eventids: [String(msg.eventid)], action: 6, message: msg.message || t('ack_msg', resolveLang(config.lang))
@@ -832,8 +889,11 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         sendResponse({ ok: true });
         pollZabbix();
       } catch (e) {
+        const emsg = String((e && e.message) || e || t('failed', resolveLang(config.lang)));
+        // sessionid do user.login expirado: invalida o cache pro proximo ack/poll re-logar
+        if (instAuthType(inst) === 'password' && AUTH_ERR_RE.test(emsg)) delete state.loginTokens[inst.id];
         console.error('[zbx] ack FALHOU', msg.eventid, e);
-        sendResponse({ ok: false, error: String((e && e.message) || e || t('failed', resolveLang(config.lang))) });
+        sendResponse({ ok: false, error: emsg });
       }
     })();
     return true;
@@ -843,12 +903,25 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     (async () => {
       const base = normalizeUrl(msg.zabbixUrl || '');
       if (!base) { sendResponse({ ok: false, error: t('e_nourl', resolveLang(config.lang)) }); return; }
-      let token = (msg.apiToken || '').trim();
-      let via = 'token';
-      if (!token) { token = await getSessionId(base); via = 'session'; }
-      if (!token) { sendResponse({ ok: false, via, error: t('no_session', resolveLang(config.lang)) }); return; }
+      const instId = msg.instId || 'test';
+      // instancia efemera so pro teste; sem authType (mensagem antiga) deriva do token
+      const inst = {
+        id: instId, url: base, label: 'test',
+        authType: msg.authType || ((msg.apiToken || '').trim() ? 'token' : 'session'),
+        token: msg.apiToken || '', username: msg.username || '', password: msg.password || ''
+      };
+      delete state.loginTokens[instId]; // teste sempre re-loga (credenciais podem ter mudado)
+      let token = null, via = instAuthType(inst);
       try {
-        const instId = msg.instId || 'test';
+        ({ token, via } = await getInstAuth(inst));
+      } catch (e) {
+        sendResponse({ ok: false, via, error: String((e && e.message) || e) }); return;
+      }
+      if (!token) {
+        sendResponse({ ok: false, via, error: t(via === 'session' ? 'no_session' : 'e_nocred', resolveLang(config.lang)) });
+        return;
+      }
+      try {
         const r = await apiCall(base, 'problem.get', { output: ['eventid'], limit: 1 }, token, instId);
         const ver = await apiCall(base, 'apiinfo.version', {}, null, instId).catch(() => null);
         sendResponse({ ok: true, via, sample: Array.isArray(r) ? r.length : 0, version: ver });

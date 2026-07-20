@@ -30,7 +30,8 @@ notificación, en tu navegador, mientras trabajas en cualquier otra cosa.
 
 ## Funciones
 
-- 🛰️ **Multi-instancia:** monitorea hasta 8 servidores Zabbix independientes a la vez, cada uno con su URL y token opcional; cada problema muestra una etiqueta de su instancia.
+- 🛰️ **Multi-instancia:** monitorea hasta 8 servidores Zabbix independientes a la vez, cada uno con su URL y autenticación; cada problema muestra una etiqueta de su instancia.
+- 🔑 **Tres modos de autenticación por instancia:** sesión del navegador (sin credenciales), token de API, o usuario y contraseña (la extensión inicia sesión y la renueva sola).
 - 🔊 **Sonido por severidad** con volumen y botón de prueba.
 - 🔁 **Re-alarma** (sonido y notificación) mientras haya un problema no reconocido, hasta dar ack o silencio.
 - 📅 **Alertar solo en horario laboral:** lee el Working time de tu servidor Zabbix y queda en silencio fuera de él (la lista y el badge siguen actualizándose).
@@ -43,9 +44,9 @@ notificación, en tu navegador, mientras trabajas en cualquier otra cosa.
 - 🟢 **Notificación de resuelto** cuando un problema se recupera.
 - 🖱️ **Clic en el problema** abre el evento exacto en Zabbix.
 - 🔎 **Filtros:** severidad mínima, edad máxima, **grupos de hosts**, excluir por texto, ocultar suprimidos/reconocidos/en mantenimiento; badge "no vistos" opcional.
-- 💾 **Backup:** exportar e importar la configuración en JSON (los tokens de las instancias nunca se exportan).
+- 💾 **Backup:** exportar e importar la configuración en JSON (los tokens y contraseñas de las instancias nunca se exportan).
 - 🌐 **Idiomas:** English, Português, Español, elegido automáticamente por el navegador.
-- 🔒 **Nada fijo en código:** las URLs de Zabbix (y los tokens opcionales) viven solo en las opciones.
+- 🔒 **Nada fijo en código:** las URLs de Zabbix (y las credenciales) viven solo en las opciones.
 
 ## Instalación
 
@@ -57,22 +58,27 @@ notificación, en tu navegador, mientras trabajas en cualquier otra cosa.
 
 1. Descarga el [release](https://github.com/opastorello/zabbix-noc-alerter/releases/latest) más reciente y descomprímelo (o clona este repositorio).
 2. Abre `chrome://extensions`, activa el **Developer mode**, pulsa **Load unpacked** y elige la carpeta.
-3. Abre las **opciones** de la extensión y agrega una instancia de Zabbix (URL, token opcional).
-4. Mantén una pestaña de Zabbix con sesión iniciada. Eso es todo.
+3. Abre las **opciones** de la extensión y agrega una instancia de Zabbix (URL y la forma de autenticación).
+4. Si elegiste el modo sesión del navegador, mantén una pestaña de Zabbix con sesión iniciada. Eso es todo.
 
 ## Cómo funciona
 
-La extensión lee la cookie de sesión de la pestaña de Zabbix donde ya tienes login
-y consulta la API por problemas activos. Un problema nuevo reproduce un sonido y
-lanza una notificación. No hace falta token; si tu versión no acepta la sesión del
-frontend para escritura (ack), define un token de API en las opciones como respaldo.
+La extensión consulta la API de Zabbix por problemas activos; un problema nuevo
+reproduce un sonido y lanza una notificación. Cada instancia se autentica de una
+de tres formas, elegida en las opciones:
+
+- **Sin autenticación (sesión del navegador):** lee la cookie de sesión de la pestaña de Zabbix donde ya tienes login. Nada que configurar; solo mantén una pestaña con sesión.
+- **Token de API:** un token generado en Zabbix (Usuario > Tokens de API). Funciona sin pestaña de Zabbix abierta y sobrevive al logout del frontend.
+- **Usuario y contraseña:** la extensión inicia sesión en la API (`user.login`) y renueva la sesión sola cuando expira.
 
 **Compatibilidad:** probado en Zabbix 6.0 a 7.4 (la sesión del frontend y todas las llamadas a la API funcionan). Zabbix 8.0 se validará cuando llegue a una versión estable.
 
 ## Privacidad
 
 Habla solo con **tu Zabbix** (la URL que configuraste) y lee la cookie de sesión
-localmente. Sin analytics, sin telemetría, sin URL o token incrustados en el código.
+localmente. Las credenciales (token o usuario/contraseña) quedan solo en tu navegador
+y nunca se exportan. Sin analytics, sin telemetría, sin URL o credencial incrustada
+en el código.
 
 ## Capturas de pantalla
 

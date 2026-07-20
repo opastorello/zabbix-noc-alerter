@@ -20,7 +20,10 @@ let captured = { sounds: [], notifs: [], cleared: [], badge: null };
 function resetCaptures() { captured = { sounds: [], notifs: [], cleared: [], badge: null }; }
 
 // ---------- cenario do Zabbix (controlado por teste) ----------
-let scenario = { byBase: {}, version: '6.0.4', groups: {}, lastProblemGet: {}, meetTabs: [], workPeriod: '' };
+// login: {user, pass, sid} habilita o user.login; requireSid: problem.get exige o sid atual
+// (simula sessao expirada trocando o sid); loginParam: 'username' (moderno) ou 'user' (Zabbix antigo);
+// cookie: valor do zbx_session do navegador (null = sem sessao aberta)
+let scenario = { byBase: {}, version: '6.0.4', groups: {}, lastProblemGet: {}, meetTabs: [], workPeriod: '', login: null, requireSid: false, loginParam: 'username', lastAuth: {}, cookie: null };
 
 // ---------- mock chrome ----------
 const storageLocal = {}, storageSession = {};
@@ -49,7 +52,10 @@ const chrome = {
     sendMessage: () => {}, lastError: null,
   },
   alarms: { create: () => {}, clear: () => {}, onAlarm: { addListener: () => {} }, get: (_n, cb) => cb && cb(null) },
-  cookies: { get: async () => null, getAll: async () => [] },
+  cookies: {
+    get: async ({ name }) => (name === 'zbx_session' && scenario.cookie) ? { name, value: scenario.cookie } : null,
+    getAll: async () => scenario.cookie ? [{ name: 'zbx_session', value: scenario.cookie }] : [],
+  },
   tabs: { query: async ({ url }) => scenario.meetTabs.filter(u => String(url) === 'https://meet.google.com/*' && u.startsWith('https://meet.google.com/')).map(u => ({ url: u })) },
   offscreen: { hasDocument: async () => true, createDocument: async () => {}, closeDocument: async () => {} },
 };
@@ -58,9 +64,26 @@ const chrome = {
 async function fetchMock(url, opts) {
   const base = String(url).replace('/api_jsonrpc.php', '');
   const body = JSON.parse(opts.body);
+  const hdrs = (opts && opts.headers) || {};
+  const auth = String(hdrs['Authorization'] || '').replace('Bearer ', '') || body.auth || null;
+  const errResp = (message, data) => ({ status: 200, json: async () => ({ jsonrpc: '2.0', error: { message, data }, id: 1 }) });
   let result;
   if (body.method === 'apiinfo.version') result = scenario.version;
-  else if (body.method === 'problem.get') { scenario.lastProblemGet[base] = body.params; result = (scenario.byBase[base] || []).map(p => ({ ...p })); }
+  else if (body.method === 'user.login') {
+    if (auth) return errResp('Invalid params.', 'user.login nao aceita autorizacao'); // metodo publico
+    const wantOld = scenario.loginParam === 'user';
+    if (wantOld && body.params.username !== undefined) return errResp('Invalid params.', 'unexpected parameter "username"');
+    if (!wantOld && body.params.user !== undefined) return errResp('Invalid params.', 'unexpected parameter "user"');
+    const u = wantOld ? body.params.user : body.params.username;
+    if (scenario.login && u === scenario.login.user && body.params.password === scenario.login.pass) result = scenario.login.sid;
+    else return errResp('Login name or password is incorrect.', '');
+  }
+  else if (body.method === 'problem.get') {
+    scenario.lastProblemGet[base] = body.params;
+    scenario.lastAuth[base] = auth;
+    if (scenario.requireSid && scenario.login && auth !== scenario.login.sid) return errResp('Session terminated, re-login, please.', '');
+    result = (scenario.byBase[base] || []).map(p => ({ ...p }));
+  }
   else if (body.method === 'hostgroup.get') { const want = (body.params.filter && body.params.filter.name) || []; result = (scenario.groups[base] || []).filter(g => want.includes(g.name)).map(g => ({ groupid: g.groupid })); }
   else if (body.method === 'trigger.get') result = ((body.params && body.params.triggerids) || []).map(id => ({ triggerid: id, hosts: [{ hostid: 'h' + id, name: 'host-' + id }] }));
   else if (body.method === 'event.acknowledge') result = { eventids: body.params.eventids };
@@ -120,6 +143,15 @@ function P(ev, sev, x = {}) { return { eventid: String(ev), objectid: 't' + ev, 
   assert(mig.zabbixUrl === undefined && mig.apiToken === undefined, 'migrateConfig: remove campos antigos');
   eq(sandbox.migrateConfig({ instances: [{ id: 'inst1' }] }).instances.length, 1, 'migrateConfig: idempotente se ja tem instances');
   eq(sandbox.migrateConfig({}).instances, [], 'migrateConfig: sem url vira lista vazia');
+  eq(sandbox.migrateConfig({ instances: [{ id: 'a', token: 'tok' }, { id: 'b', token: '' }] }).instances.map(i => i.authType),
+    ['token', 'session'], 'migrateConfig: authType derivado do token (preenchido=token, vazio=session)');
+  eq(sandbox.migrateConfig({ instances: [{ id: 'a', authType: 'password', token: 'tok' }] }).instances[0].authType,
+    'password', 'migrateConfig: authType explicito e preservado');
+
+  // instAuthType
+  eq(sandbox.instAuthType({ authType: 'password' }), 'password', 'instAuthType: usa o authType explicito');
+  eq(sandbox.instAuthType({ token: 'tok' }), 'token', 'instAuthType: sem authType com token = token');
+  eq(sandbox.instAuthType({ token: '  ' }), 'session', 'instAuthType: sem authType e token em branco = session');
 
   // enabledInstances
   const en = sandbox.enabledInstances({ instances: [
@@ -291,6 +323,86 @@ function P(ev, sev, x = {}) { return { eventid: String(ev), objectid: 't' + ev, 
   scenario.lastProblemGet = {};
   await setConfig({ instances: [{ id: 'inst1', label: 'PRD', url: 'https://z1', token: 't1', enabled: true, hostGroups: '' }], minSeverity: 0, repeatAlarm: false });
   assert(!('groupids' in (scenario.lastProblemGet['https://z1'] || {})), 'sem host groups: problem.get nao envia groupids (observa todos)');
+
+  console.log('\n--- Integracao: autenticacao usuario/senha ---');
+  scenario.login = { user: 'noc', pass: 's3cret', sid: 'sid-aaa' };
+  scenario.requireSid = true;
+  scenario.byBase = { 'https://z1': [P(900, 5)] };
+  const instPwd = { id: 'inst1', label: 'PRD', url: 'https://z1', authType: 'password', username: 'noc', password: 's3cret', enabled: true };
+  await setConfig({ instances: [instPwd], minSeverity: 0, repeatAlarm: false });
+  eq(knownKeys(), ['inst1:900'], 'usuario/senha: user.login + poll funcionam');
+  eq(scenario.lastAuth['https://z1'], 'sid-aaa', 'problem.get usa o sessionid retornado pelo user.login');
+  eq(BG.getState().instStatus.inst1.via, 'password', 'instStatus.via = password');
+
+  // sessao da API expira -> re-login transparente no MESMO poll
+  scenario.login.sid = 'sid-bbb'; // servidor invalidou o sid antigo
+  await poll();
+  eq(scenario.lastAuth['https://z1'], 'sid-bbb', 'sessao expirada: re-loga e completa o poll com o sid novo');
+  eq(status().total, 1, 'poll apos re-login segue ok');
+
+  // Zabbix antigo: rejeita o parametro "username" -> fallback para "user"
+  scenario.loginParam = 'user';
+  scenario.login.sid = 'sid-ccc';
+  await setConfig({ instances: [instPwd], minSeverity: 0, repeatAlarm: false }); // limpa o cache de login
+  eq(scenario.lastAuth['https://z1'], 'sid-ccc', 'Zabbix antigo: fallback do parametro username -> user loga');
+
+  // senha errada -> instStatus de erro (sem alerta falso)
+  scenario.loginParam = 'username';
+  await setConfig({ instances: [{ ...instPwd, password: 'errada' }], minSeverity: 0, repeatAlarm: false });
+  eq(BG.getState().instStatus.inst1.state, 'error', 'senha errada: instStatus vira error');
+  assert(/incorrect/i.test(BG.getState().instStatus.inst1.error || ''), 'senha errada: mensagem do Zabbix propagada');
+
+  // campos vazios no modo usuario/senha -> sem credencial (error, nao "no-session")
+  await setConfig({ instances: [{ ...instPwd, username: '', password: '' }], minSeverity: 0, repeatAlarm: false });
+  eq(BG.getState().instStatus.inst1.state, 'error', 'usuario/senha vazios: instStatus error (sem credencial)');
+
+  // testConnection com usuario/senha (fluxo do botao Testar das opcoes)
+  const tcOk = await send({ action: 'testConnection', zabbixUrl: 'https://z1', authType: 'password', username: 'noc', password: 's3cret', instId: 'test' });
+  eq([tcOk.ok, tcOk.via], [true, 'password'], 'testConnection: usuario/senha ok, via=password');
+  const tcBad = await send({ action: 'testConnection', zabbixUrl: 'https://z1', authType: 'password', username: 'noc', password: 'errada', instId: 'test' });
+  eq(tcBad.ok, false, 'testConnection: senha errada retorna ok=false');
+  // mensagem antiga sem authType (compat): token preenchido continua via=token
+  scenario.requireSid = false; // token de API nao passa pela exigencia de sid do mock
+  const tcTok = await send({ action: 'testConnection', zabbixUrl: 'https://z1', apiToken: 't1', instId: 'test' });
+  eq([tcTok.ok, tcTok.via], [true, 'token'], 'testConnection sem authType: deriva token do apiToken');
+  scenario.login = null;
+
+  console.log('\n--- Integracao: modo sessao explicito e token vazio ---');
+  const zbxCookie = (sid) => Buffer.from(JSON.stringify({ sessionid: sid, sign: 'x' })).toString('base64');
+  scenario.cookie = zbxCookie('sess-123');
+  scenario.byBase = { 'https://z1': [P(950, 5)] };
+  await setConfig({ instances: [{ id: 'inst1', label: 'PRD', url: 'https://z1', authType: 'session', token: 'IGNORADO', enabled: true }], minSeverity: 0, repeatAlarm: false });
+  eq(knownKeys(), ['inst1:950'], 'modo sessao: poll funciona com o cookie zbx_session');
+  eq(scenario.lastAuth['https://z1'], 'sess-123', 'modo sessao: usa o sessionid do cookie e IGNORA o token digitado');
+  eq(BG.getState().instStatus.inst1.via, 'session', 'instStatus.via = session');
+
+  // formato legado do cookie: o valor cru e o proprio sessionid
+  scenario.cookie = 'abcdef1234567890abcd';
+  await setConfig({ instances: [{ id: 'inst1', label: 'PRD', url: 'https://z1', authType: 'session', enabled: true }], minSeverity: 0, repeatAlarm: false });
+  eq(scenario.lastAuth['https://z1'], 'abcdef1234567890abcd', 'modo sessao: cookie legado (valor = sessionid)');
+
+  // sessao rejeitada pelo servidor -> no-session (pede login de novo, nao vira "error")
+  scenario.cookie = zbxCookie('sess-morta');
+  scenario.login = { user: 'x', pass: 'y', sid: 'sess-viva' };
+  scenario.requireSid = true;
+  await setConfig({ instances: [{ id: 'inst1', label: 'PRD', url: 'https://z1', authType: 'session', enabled: true }], minSeverity: 0, repeatAlarm: false });
+  eq(BG.getState().instStatus.inst1.state, 'no-session', 'sessao rejeitada pelo servidor: no-session');
+  scenario.login = null; scenario.requireSid = false;
+
+  // sem cookie -> no-session
+  scenario.cookie = null;
+  await setConfig({ instances: [{ id: 'inst1', label: 'PRD', url: 'https://z1', authType: 'session', enabled: true }], minSeverity: 0, repeatAlarm: false });
+  eq(BG.getState().instStatus.inst1.state, 'no-session', 'modo sessao sem cookie: no-session');
+
+  // modo token com token vazio -> sem credencial (error, nao cai pra sessao)
+  scenario.cookie = zbxCookie('sess-123');
+  await setConfig({ instances: [{ id: 'inst1', label: 'PRD', url: 'https://z1', authType: 'token', token: '', enabled: true }], minSeverity: 0, repeatAlarm: false });
+  eq(BG.getState().instStatus.inst1.state, 'error', 'modo token sem token: error (nao usa a sessao como fallback)');
+
+  // testConnection no modo sessao
+  const tcSess = await send({ action: 'testConnection', zabbixUrl: 'https://z1', authType: 'session', instId: 'test' });
+  eq([tcSess.ok, tcSess.via], [true, 'session'], 'testConnection: modo sessao ok, via=session');
+  scenario.cookie = null;
 
   // =================================================================
   console.log('\n' + '='.repeat(44));
