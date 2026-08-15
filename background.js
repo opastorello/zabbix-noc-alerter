@@ -1,11 +1,12 @@
 // Zabbix NOC Alerter - Background Service Worker
-// Le os problemas do Zabbix usando a SESSAO ABERTA do navegador (cookie zbx_session),
-// ou um token opcional. Toca som + notificacao quando surge problema novo.
-// NADA hardcoded: a URL e o token vivem so nas opcoes (chrome.storage.local).
+// Le os problemas do Zabbix autenticando por instancia: SESSAO ABERTA do navegador
+// (cookie zbx_session), token de API, ou usuario/senha (user.login com sessionid cacheado).
+// Toca som + notificacao quando surge problema novo.
+// NADA hardcoded: a URL e as credenciais vivem so nas opcoes (chrome.storage.local).
 
 importScripts('i18n.js'); // traducoes (I18N, t, resolveLang) tambem no service worker
 
-const DEFAULT_INSTANCE = { id: '', label: '', url: '', token: '', enabled: true, hostGroups: '' };
+const DEFAULT_INSTANCE = { id: '', label: '', url: '', authType: 'session', token: '', username: '', password: '', enabled: true, hostGroups: '' };
 const MAX_INSTANCES = 8;
 
 const DEFAULT_CONFIG = {
@@ -20,7 +21,7 @@ const DEFAULT_CONFIG = {
   notificationsEnabled: true,
   notifyResolved: true,   // notificar quando um problema for resolvido (recuperado)
   badgeUnseen: false,     // badge conta so problemas NOVOS (nao vistos) desde a ultima abertura do popup; zera ao abrir
-  volume: 0.8,            // 0..1
+  volume: 0.25,           // 0..1
   soundSev5: 'klaxon',    // disaster
   soundSev4: 'siren',     // high
   soundSev3: 'pulse',     // average
@@ -41,19 +42,34 @@ const DEFAULT_CONFIG = {
 
 // Migra formato antigo (zabbixUrl/apiToken flat) para o novo (instances[])
 function migrateConfig(cfg) {
-  if (cfg.instances && cfg.instances.length) return cfg; // ja no formato novo
-  if (cfg.zabbixUrl) {
-    cfg.instances = [{ id: 'inst1', label: 'Zabbix', url: cfg.zabbixUrl, token: cfg.apiToken || '', enabled: true }];
-    delete cfg.zabbixUrl; delete cfg.apiToken;
-  } else {
-    cfg.instances = [];
+  if (!cfg.instances || !cfg.instances.length) {
+    if (cfg.zabbixUrl) {
+      cfg.instances = [{ id: 'inst1', label: 'Zabbix', url: cfg.zabbixUrl, token: cfg.apiToken || '', enabled: true }];
+      delete cfg.zabbixUrl; delete cfg.apiToken;
+    } else {
+      cfg.instances = [];
+    }
   }
+  // authType explicito: configs anteriores ao seletor derivam do token (preenchido = token, vazio = sessao)
+  cfg.instances = cfg.instances.map(i => i.authType ? i : { ...i, authType: (i.token && i.token.trim()) ? 'token' : 'session' });
   return cfg;
 }
 
 // Retorna instancias habilitadas com URL preenchida
 function enabledInstances(cfg) {
   return (cfg.instances || []).filter(i => i.enabled && i.url && i.url.trim());
+}
+
+// Assinatura dos campos que mudam QUAIS problemas ficam visiveis (severidade, exclude, host group,
+// instancia ligada/desligada/trocada). Usada por setConfig pra so re-baselinear quando o filtro em
+// si mudou; salvar uma opcao qualquer (som, volume, idioma...) nao pode fazer um problema novo virar
+// "ja conhecido" so por coincidir com a janela do save.
+function filterSignature(cfg) {
+  const inst = (cfg.instances || []).map(i => [i.id, i.url, i.hostGroups || '', !!i.enabled]);
+  return JSON.stringify([
+    Number(cfg.minSeverity) || 0, cfg.excludePatterns || '', !!cfg.ignoreAckd,
+    !!cfg.ignoreMaintenance, !!cfg.ignoreSuppressed, Number(cfg.maxAgeDays) || 0, inst
+  ]);
 }
 
 // Resolve os nomes de host group de uma instancia para groupids, cacheado por instId+nomes.
@@ -79,10 +95,14 @@ const SEV_NAME = { 0: 'not_classified', 1: 'info', 2: 'warning', 3: 'average', 4
 const SEV_COLOR = { 5: '#e45959', 4: '#e97659', 3: '#ffa059', 2: '#ffc859', 1: '#7499ff', 0: '#97aab3' };
 
 // Limites de negocio (auto-documentados)
-const MAX_PROBLEMS_FETCH = 500;   // teto do problem.get por poll
-const MAX_PROBLEMS_UI = 60;       // quantos problemas o popup mostra
+const MAX_PROBLEMS_FETCH = 500;   // teto do problem.get por poll, POR INSTANCIA
+const MAX_PROBLEMS_STORE = 2000;  // teto do total (todas as instancias somadas) gravado no storage
+                                   // a cada poll; bem acima do uso real, so pra nao escrever um payload
+                                   // sem limite no pior caso (8 instancias todas perto do teto acima).
 const MAX_NOTIFS_PER_POLL = 5;    // notificacoes do navegador por ciclo (anti-flood)
 const MIN_POLL_SEC = 5;           // piso do intervalo de checagem
+const BACKOFF_BASE_SEC = 30;      // 1a espera apos falha de rede/API (dobra a cada falha seguinte)
+const BACKOFF_CAP_SEC = 300;      // teto do backoff (5 min), pra nao parar de tentar de vez
 // notifId -> url do problema, espelhado em chrome.storage.session (sobrevive ao sleep do SW)
 const NOTIF_TTL_MS = 6 * 60 * 60 * 1000; // 6h
 const NOTIF_MAX = 200;
@@ -96,10 +116,13 @@ let state = {
   lastSeenTs: 0,          // quando o popup foi aberto pela ultima vez (base do badge de 'nao vistos')
   snoozes: {},            // "instId:eventid" -> timestamp ate quando o problema fica em silencio (snooze individual)
   authModes: {},          // instId -> 'header' | 'body' = modo de auth por instancia (cache; evita 2x request no 6.x)
+  loginTokens: {},        // instId -> sessionid do user.login (modo usuario/senha; invalidado ao expirar)
   status: { state: 'unconfigured' },
   instStatus: {},         // instId -> {state, via, error, total, ...} status individual
   groupCache: {},         // instId -> {key, ids} cache da resolucao de host groups (nome -> groupid)
-  workPeriodCache: {}     // instId -> {period|null, ts} cache do work_period (settings.get); null = falhou
+  workPeriodCache: {},    // instId -> {period|null, ts} cache do work_period (settings.get); null = falhou
+  instBackoff: {},        // instId -> {fails, nextAt} backoff exponencial apos erro de rede/API (reseta no sucesso)
+  lastActive: {}          // instId -> ultima lista de "active" com sucesso (reusada enquanto em backoff)
 };
 let _pollInFlight = false, _pollAgain = false; // mutex + coalescing do poll
 
@@ -186,6 +209,46 @@ async function getSessionId(baseUrl) {
   return null;
 }
 
+// Erros do Zabbix que significam "credencial de sessao invalida/expirada"
+const AUTH_ERR_RE = /not authorized|session terminated|re-login|reauthorization|need to be logged/i;
+
+// Modo de autenticacao da instancia; configs antigas (sem authType) derivam do token.
+function instAuthType(inst) {
+  return inst.authType || ((inst.token && inst.token.trim()) ? 'token' : 'session');
+}
+
+// Login com usuario/senha (user.login). O sessionid retornado e cacheado por instancia e
+// reutilizado ate expirar (AUTH_ERR_RE no poll invalida e re-loga). Zabbix 5.4+ usa o
+// parametro 'username'; versoes antigas so aceitam 'user' -> tenta o novo e cai pro antigo.
+async function loginWithPassword(base, inst) {
+  const cached = state.loginTokens[inst.id];
+  if (cached) return cached;
+  const user = (inst.username || '').trim();
+  const pass = inst.password || '';
+  if (!user || !pass) return null;
+  let sid;
+  try {
+    sid = await apiCall(base, 'user.login', { username: user, password: pass }, null, inst.id);
+  } catch (e) {
+    // "unexpected parameter \"username\"" = Zabbix antigo -> re-tenta com 'user'
+    if (!/username/i.test(String((e && e.message) || e))) throw e;
+    sid = await apiCall(base, 'user.login', { user: user, password: pass }, null, inst.id);
+  }
+  if (typeof sid !== 'string' || !sid) throw new Error('user.login: resposta inesperada');
+  state.loginTokens[inst.id] = sid;
+  return sid;
+}
+
+// Resolve a credencial da instancia conforme o modo: token fixo, login usuario/senha
+// (sessionid cacheado) ou cookie da sessao aberta no navegador. token null = sem credencial.
+async function getInstAuth(inst) {
+  const base = normalizeUrl(inst.url);
+  const mode = instAuthType(inst);
+  if (mode === 'token') return { token: (inst.token || '').trim() || null, via: 'token' };
+  if (mode === 'password') return { token: await loginWithPassword(base, inst), via: 'password' };
+  return { token: await getSessionId(base), via: 'session' };
+}
+
 // Chamada JSON-RPC. Tenta header Bearer (Zabbix 7.0+) e cai pro body 'auth' (6.x).
 function errText(e, status) {
   if (e) return e.data || e.message || (typeof e === 'string' ? e : JSON.stringify(e));
@@ -207,8 +270,8 @@ async function apiCall(baseUrl, method, params, token, instId) {
     return { res, data };
   }
 
-  // apiinfo.version e metodo PUBLICO do Zabbix: DEVE ir sem auth (rejeita Authorization).
-  if (method === 'apiinfo.version') {
+  // apiinfo.version e user.login sao metodos PUBLICOS do Zabbix: DEVEM ir sem auth (rejeitam Authorization).
+  if (method === 'apiinfo.version' || method === 'user.login') {
     const r = await call('anon');
     if (r.data && !r.data.error) return r.data.result;
     throw new Error(errText(r.data && r.data.error, r.res.status));
@@ -297,7 +360,7 @@ async function readWorkPeriod(inst) {
   }
   try {
     const base = normalizeUrl(inst.url);
-    const token = (inst.token || '').trim() || await getSessionId(base);
+    const { token } = await getInstAuth(inst);
     if (!token) {
       const err = t('no_session', resolveLang(config.lang));
       state.workPeriodCache[inst.id] = { period: null, ts: Date.now(), err };
@@ -329,11 +392,13 @@ async function getWorkPeriods(instances) {
 }
 
 // "Em horario" se estiver dentro do work_period de QUALQUER instancia legivel (uniao).
-// Fail-open: nenhuma legivel = true (nunca deixar de alertar por falha de leitura).
+// Fail-open: nenhuma legivel = working=true (nunca deixar de alertar por falha de leitura), mas
+// devolve o erro pra quem chama poder AVISAR que a opcao parou de fazer efeito (hardening do
+// IDEAS.md - antes o fail-open era silencioso e ninguem percebia que settings.get comecou a falhar).
 async function isWorkingTime(instances) {
-  const { list } = await getWorkPeriods(instances);
-  if (!list.length) return true;
-  return list.some(i => inWorkPeriod(i.period, new Date()));
+  const { list, error } = await getWorkPeriods(instances);
+  if (!list.length) return { working: true, error };
+  return { working: list.some(i => inWorkPeriod(i.period, new Date())), error: '' };
 }
 
 async function isInMeeting() {
@@ -403,15 +468,30 @@ async function _pollZabbixOnce() {
   }
   if (_snzChanged) saveSnoozes();
 
+  // fora do Working time do Zabbix (se a opcao estiver ligada): silencia som E notificacao;
+  // a lista, o badge e o status continuam atualizando normalmente. Calculado ANTES do setStatus
+  // pra poder avisar no popup quando a leitura falhar (fail-open continua valendo pro alerta).
+  let workingTimeError = '';
+  let offHours = false;
+  if (config.workingTimeOnly) {
+    const wt = await isWorkingTime(instances);
+    workingTimeError = wt.error;
+    offHours = !wt.working;
+  }
+
+  const sortedActive = allActive.sort((a, b) => Number(b.severity) - Number(a.severity) || Number(b.clock) - Number(a.clock));
+  if (sortedActive.length > MAX_PROBLEMS_STORE) {
+    console.warn('[zbx] ' + sortedActive.length + ' problemas ativos, gravando so os primeiros ' + MAX_PROBLEMS_STORE + ' (MAX_PROBLEMS_STORE)');
+  }
   setStatus({
     state: 'ok',
     total: allActive.length,
     bySev,
     freshCount: allFresh.length,
     instStatus: state.instStatus,
-    problems: allActive
-      .sort((a, b) => Number(b.severity) - Number(a.severity) || Number(b.clock) - Number(a.clock))
-      .slice(0, MAX_PROBLEMS_UI)
+    workingTimeError,
+    problems: sortedActive
+      .slice(0, MAX_PROBLEMS_STORE)
       .map(p => ({
         eventid: p.eventid, objectid: p.objectid, hostid: p.hostid || '', name: p.name, host: p.host || '',
         severity: Number(p.severity), clock: Number(p.clock), acknowledged: p.acknowledged === '1',
@@ -421,9 +501,17 @@ async function _pollZabbixOnce() {
       }))
   });
 
-  // badge: total de ativos (padrao) ou so os "nao vistos" desde a ultima abertura do popup
+  // badge: total de ativos (padrao) ou so os "nao vistos" desde a ultima abertura do popup.
+  // Usa firstSeenTs (quando a EXTENSAO descobriu, guardado em state.known), nao p.clock (quando o
+  // problema comecou no Zabbix) - um problema detectado tarde (poll atrasado, backoff) tem que
+  // contar como "nao visto" mesmo se o clock dele for anterior a ultima abertura do popup.
   if (config.badgeUnseen) {
-    const unseen = allActive.filter(p => Number(p.clock) * 1000 > state.lastSeenTs);
+    const unseen = allActive.filter(p => {
+      const entry = state.known.get(p._instId + ':' + p.eventid);
+      // >= (nao so >): descoberto no MESMO milissegundo que o popup abriu ainda conta como nao
+      // visto, o popup nao poderia ter mostrado algo que so foi descoberto naquele instante.
+      return (entry ? entry.firstSeenTs : 0) >= state.lastSeenTs;
+    });
     const unseenMax = unseen.reduce((m, p) => Math.max(m, Number(p.severity)), 0);
     setBadge(unseen.length ? String(unseen.length) : '', SEV_COLOR[unseenMax] || '#97aab3');
   } else {
@@ -433,9 +521,7 @@ async function _pollZabbixOnce() {
   // dispara alerta
   const now = Date.now();
   const inMeeting = config.suppressDuringMeeting && await isInMeeting();
-  // fora do Working time do Zabbix (se a opcao estiver ligada): silencia som E notificacao;
-  // a lista, o badge e o status continuam atualizando normalmente.
-  const offHours = config.workingTimeOnly && !(await isWorkingTime(instances));
+  // offHours ja calculado acima (antes do setStatus)
   const suppressSound = offHours || (inMeeting && config.meetSuppressSound);
   const suppressNotif = offHours || (inMeeting && config.meetSuppressNotif);
   if (!config.muted) {
@@ -443,22 +529,35 @@ async function _pollZabbixOnce() {
     const freshAlert = allFresh.filter(p => !inMaintenance(p) && !isSnoozed(p));
     if (freshAlert.length) {
       const freshMax = freshAlert.reduce((m, p) => Math.max(m, Number(p.severity)), 0);
-      if (config.soundEnabled && !suppressSound) { playSound(soundForSeverity(freshMax), config.volume); state.lastAlarmTs = now; }
+      let alerted = false;
+      if (config.soundEnabled && !suppressSound) { playSound(soundForSeverity(freshMax), config.volume); alerted = true; }
       if (config.notificationsEnabled && !suppressNotif) {
         freshAlert.sort((a, b) => Number(b.severity) - Number(a.severity));
-        freshAlert.slice(0, MAX_NOTIFS_PER_POLL).forEach(p => notify(p, baseFor(p._instId)));
+        const shown = freshAlert.slice(0, MAX_NOTIFS_PER_POLL);
+        const extra = freshAlert.length - shown.length;
+        shown.forEach((p, i) => notify(p, baseFor(p._instId), null, i === shown.length - 1 ? extra : 0));
+        alerted = true;
       }
+      // conta como "acabou de alarmar" mesmo so com notificacao (som desligado): senao o nag, que
+      // usa lastAlarmTs pra saber quando foi o ultimo alerta, achava que estava atrasado e disparava
+      // uma SEGUNDA notificacao (zbx-nag) no mesmo poll pro problema que acabou de chegar.
+      if (alerted) state.lastAlarmTs = now;
     }
     // SNOOZE ACABOU: re-alerta na hora (som + notificacao), mesmo com re-alarme off e sem ser "novo".
     if (justWoke.length) {
       const woke = allActive.filter(p => justWoke.includes(snzKey(p)) && p.acknowledged !== '1' && !inMaintenance(p));
       if (woke.length) {
         const wokeMax = woke.reduce((m, p) => Math.max(m, Number(p.severity)), 0);
-        if (config.soundEnabled && !suppressSound) { playSound(soundForSeverity(wokeMax), config.volume); state.lastAlarmTs = now; }
+        let wokeAlerted = false;
+        if (config.soundEnabled && !suppressSound) { playSound(soundForSeverity(wokeMax), config.volume); wokeAlerted = true; }
         if (config.notificationsEnabled && !suppressNotif) {
           woke.sort((a, b) => Number(b.severity) - Number(a.severity));
-          woke.slice(0, MAX_NOTIFS_PER_POLL).forEach(p => notify(p, baseFor(p._instId)));
+          const shownWoke = woke.slice(0, MAX_NOTIFS_PER_POLL);
+          const extraWoke = woke.length - shownWoke.length;
+          shownWoke.forEach((p, i) => notify(p, baseFor(p._instId), null, i === shownWoke.length - 1 ? extraWoke : 0));
+          wokeAlerted = true;
         }
+        if (wokeAlerted) state.lastAlarmTs = now;
       }
     }
     // NAG: re-alarma enquanto houver problema NAO-ackado (som + notificacao, ate dar ack ou mute)
@@ -480,26 +579,71 @@ async function _pollZabbixOnce() {
     }
   }
 
-  // RESOLVIDOS (fora do Working time tambem ficam em silencio)
-  if (config.notifyResolved && config.notificationsEnabled && !offHours && allResolved.length) {
-    allResolved.slice(0, MAX_NOTIFS_PER_POLL).forEach(p => notifyResolved(p, baseFor(p.instId)));
+  // RESOLVIDOS: segue as mesmas regras de silencio dos alertas (mute, off hours, modo reuniao),
+  // em vez de checar so o off hours - senao um resolvido ainda notifica mutado ou em call.
+  if (!config.muted && config.notifyResolved && config.notificationsEnabled && !suppressNotif && allResolved.length) {
+    const shownResolved = allResolved.slice(0, MAX_NOTIFS_PER_POLL);
+    const extraResolved = allResolved.length - shownResolved.length;
+    shownResolved.forEach((p, i) => notifyResolved(p, baseFor(p.instId), i === shownResolved.length - 1 ? extraResolved : 0));
   }
 }
 
+// backoff exponencial por instancia: so entra em jogo apos erro de REDE/API (login ou problem.get),
+// nunca por falta de credencial/sessao (essas nao custam uma chamada de rede pra falhar de novo).
+function bumpBackoff(instId) {
+  const cur = state.instBackoff[instId] || { fails: 0 };
+  const fails = cur.fails + 1;
+  const delaySec = Math.min(BACKOFF_CAP_SEC, BACKOFF_BASE_SEC * Math.pow(2, fails - 1));
+  state.instBackoff[instId] = { fails, nextAt: Date.now() + delaySec * 1000 };
+}
+function resetBackoff(instId) { delete state.instBackoff[instId]; }
+
+// resultado "reaproveitado" em QUALQUER falha (backoff pulado, sessao caida, erro de rede): nunca
+// bate a rede pra montar isso, reusa a ultima lista de problemas conhecida como se nada tivesse
+// mudado. Sem isso, cada falha zera currentMap -> state.known perde a instancia -> quando ela volta
+// (sessao renovada, credencial corrigida), todo problema ainda ativo parece "novo" e dispara uma
+// tempestade de alertas pra algo que ja era conhecido antes da falha comecar.
+function _carryForward(inst, instStatus) {
+  const cachedActive = state.lastActive[inst.id] || [];
+  const currentMap = new Map(cachedActive.map(p => {
+    const key = inst.id + ':' + p.eventid;
+    const prev = state.known.get(key); // preserva firstSeenTs: nao "descobrimos" nada de novo aqui
+    return [key, {
+      name: p.name, host: p.host || '', hostid: p.hostid || '', objectid: p.objectid || '',
+      severity: Number(p.severity), instId: inst.id, instLabel: inst.label,
+      firstSeenTs: (prev && prev.firstSeenTs) || 0
+    }];
+  }));
+  return { active: cachedActive, fresh: [], resolved: [], currentMap, instStatus };
+}
+function _backoffSkipResult(inst) {
+  return _carryForward(inst, state.instStatus[inst.id] || { state: 'error', via: 'unknown', error: 'backoff', label: inst.label });
+}
+
 // Poll de UMA instancia - retorna {active, fresh, resolved, currentMap, instStatus}
-async function _pollInstance(inst) {
+// _retried: ja re-logou uma vez neste poll (modo usuario/senha; evita loop de re-login)
+async function _pollInstance(inst, _retried) {
   const base = normalizeUrl(inst.url);
   if (!base) return null;
 
-  let token = (inst.token || '').trim();
-  let via = 'token';
+  const bo = state.instBackoff[inst.id];
+  if (bo && bo.nextAt > Date.now()) return _backoffSkipResult(inst);
+
+  let token, via;
+  try {
+    ({ token, via } = await getInstAuth(inst));
+  } catch (e) {
+    // user.login falhou (senha errada / API fora do ar)
+    bumpBackoff(inst.id);
+    const s = { state: 'error', via: 'password', error: String((e && e.message) || e), label: inst.label };
+    return _carryForward(inst, s);
+  }
   if (!token) {
-    token = await getSessionId(base);
-    via = 'session';
-    if (!token) {
-      state.instStatus[inst.id] = { state: 'no-session', via, label: inst.label };
-      return { active: [], fresh: [], resolved: [], currentMap: new Map(), instStatus: { state: 'no-session', via, label: inst.label } };
-    }
+    // sessao: sem cookie -> "faca login"; usuario/senha ou token: campos vazios -> sem credencial
+    const s = via === 'session'
+      ? { state: 'no-session', via, label: inst.label }
+      : { state: 'error', via, error: t('e_nocred', resolveLang(config.lang)), label: inst.label };
+    return _carryForward(inst, s);
   }
 
   let problems;
@@ -520,13 +664,20 @@ async function _pollInstance(inst) {
     problems = await apiCall(base, 'problem.get', pget, token, inst.id);
   } catch (e) {
     const emsg = String((e && e.message) || e);
-    if (via === 'session' && /not authorized|session terminated|re-login|reauthorization|need to be logged/i.test(emsg)) {
+    if (via === 'session' && AUTH_ERR_RE.test(emsg)) {
       const s = { state: 'no-session', via, label: inst.label };
-      return { active: [], fresh: [], resolved: [], currentMap: new Map(), instStatus: s };
+      return _carryForward(inst, s);
     }
+    if (via === 'password' && !_retried && AUTH_ERR_RE.test(emsg)) {
+      // sessionid do user.login expirou -> descarta o cache e re-loga UMA vez no mesmo poll
+      delete state.loginTokens[inst.id];
+      return _pollInstance(inst, true);
+    }
+    bumpBackoff(inst.id);
     const s = { state: 'error', via, error: emsg, label: inst.label };
-    return { active: [], fresh: [], resolved: [], currentMap: new Map(), instStatus: s };
+    return _carryForward(inst, s);
   }
+  resetBackoff(inst.id); // problem.get respondeu: instancia esta viva, zera o backoff
 
   if (!Array.isArray(problems)) problems = [];
 
@@ -544,11 +695,17 @@ async function _pollInstance(inst) {
   // resolve hosts
   const tids = [...new Set(active.map(p => p.objectid).filter(Boolean))];
   const hostMap = {};
+  let hostsDegraded = false; // trigger.get falhou OU voltou incompleto: hosts ficam invisiveis neste poll
   if (tids.length) {
     try {
-      const trg = await apiCall(base, 'trigger.get', { triggerids: tids, output: ['triggerid'], selectHosts: ['hostid', 'name'] }, token, inst.id);
-      (trg || []).forEach(t => { const h = (t.hosts && t.hosts[0]) || {}; hostMap[t.triggerid] = { name: h.name || '', hostid: h.hostid || '' }; });
+      const trg = await apiCall(base, 'trigger.get', { triggerids: tids, output: ['triggerid', 'status'], selectHosts: ['hostid', 'name'] }, token, inst.id);
+      (trg || []).forEach(t => { const h = (t.hosts && t.hosts[0]) || {}; hostMap[t.triggerid] = { name: h.name || '', hostid: h.hostid || '', status: t.status }; });
+      // resposta 200 mas faltando algum trigger pedido (ex.: token sem permissao nesses hosts
+      // especificos) tem o MESMO efeito visual de uma falha - linha sem host - entao conta como
+      // degradado tambem, nao so quando a chamada lanca excecao.
+      if (tids.some(id => !hostMap[id])) hostsDegraded = true;
     } catch (e) {
+      hostsDegraded = true;
       console.warn('[zbx][' + inst.label + '] trigger.get falhou:', String((e && e.message) || e));
     }
   }
@@ -557,6 +714,13 @@ async function _pollInstance(inst) {
     const acks = (p.acknowledges || []).filter(a => a.message && a.message.trim()).sort((a, b) => Number(a.clock) - Number(b.clock));
     p.ackmsg = acks.length ? acks[acks.length - 1].message : '';
   });
+
+  // trigger desabilitado: o Zabbix nao fecha o problema sozinho ao desabilitar o trigger, entao ele
+  // fica orfao na lista para sempre (issue #25). So filtra quando o trigger.get respondeu (fail-open
+  // se falhou acima, ja que ai nao sabemos o status de nenhum).
+  if (tids.length && Object.keys(hostMap).length) {
+    active = active.filter(p => { const h = hostMap[p.objectid]; return !(h && h.status === '1'); });
+  }
 
   // filtro exclude
   const exTerms = (config.excludePatterns || '').split(/[\n,]/).map(s => s.trim().toLowerCase()).filter(Boolean);
@@ -567,11 +731,24 @@ async function _pollInstance(inst) {
     });
   }
 
-  // chave composta instId:eventid
-  const currentMap = new Map(active.map(p => [inst.id + ':' + p.eventid, {
-    name: p.name, host: p.host || '', hostid: p.hostid || '', objectid: p.objectid || '',
-    severity: Number(p.severity), instId: inst.id, instLabel: inst.label
-  }]));
+  state.lastActive[inst.id] = active; // cache pro backoff: o que reaproveitar se a proxima falhar
+
+  // chave composta instId:eventid. firstSeenTs e QUANDO A EXTENSAO DESCOBRIU o problema (nao o
+  // p.clock do Zabbix, que e quando o problema comecou no servidor): usado pelo badge "nao visto"
+  // (badgeUnseen). Se usasse p.clock, um problema antigo detectado tarde (poll atrasado, instancia
+  // em backoff) nunca contaria como "nao visto" mesmo que o usuario nunca tenha visto ele de fato.
+  // Ja conhecido -> mantem o timestamp original. Novo E ja tinha baseline -> "agora" (fresh de
+  // verdade). Novo NA PROPRIA baseline (1o poll, ainda sem state.initialized) -> 0, pra nao inundar
+  // o badge com tudo que ja existia quando a extensao ligou.
+  const currentMap = new Map(active.map(p => {
+    const key = inst.id + ':' + p.eventid;
+    const prev = state.known.get(key);
+    const firstSeenTs = prev ? (prev.firstSeenTs || 0) : (state.initialized ? Date.now() : 0);
+    return [key, {
+      name: p.name, host: p.host || '', hostid: p.hostid || '', objectid: p.objectid || '',
+      severity: Number(p.severity), instId: inst.id, instLabel: inst.label, firstSeenTs
+    }];
+  }));
 
   // novos e resolvidos
   let fresh = [], resolved = [];
@@ -586,7 +763,7 @@ async function _pollInstance(inst) {
     }
   }
 
-  const instStatus = { state: 'ok', via, label: inst.label, total: active.length };
+  const instStatus = { state: 'ok', via, label: inst.label, total: active.length, degraded: hostsDegraded };
   return { active, fresh, resolved, currentMap, instStatus };
 }
 
@@ -636,31 +813,40 @@ function dropNotifUrl(id) {
   } catch (e) {}
 }
 
-function notify(p, base, fixedId) {
+// extraCount: quantos problemas do mesmo lote ficaram de fora do teto MAX_NOTIFS_PER_POLL
+// (anti-flood). Sem isso o corte e silencioso: contMessage avisa "e mais N" na ultima notificacao
+// do lote, em vez do usuario achar que so aqueles couberam de fato apareceram.
+function notify(p, base, fixedId, extraCount) {
   const sev = Number(p.severity);
+  const lang = resolveLang(config.lang);
   // fixedId (ex.: 'zbx-nag') reusa a MESMA notificacao a cada ciclo do re-alarme,
   // atualizando no lugar em vez de empilhar uma nova notificacao a cada toque.
   const id = fixedId || ('zbx-' + p.eventid + '-' + Date.now());
+  const ctx = 'Zabbix NOC Alerter - ' + t('n_click', lang)
+    + (extraCount > 0 ? ' - ' + t('and_more', lang).replace('{n}', extraCount) : '');
   chrome.notifications.create(id, {
     type: 'basic',
     iconUrl: 'icons/icon128.png',
-    title: '[' + t('nsev' + sev, resolveLang(config.lang)).toUpperCase() + '] ' + (p.host || 'Zabbix'),
+    title: '[' + t('nsev' + sev, lang).toUpperCase() + '] ' + (p.host || 'Zabbix'),
     message: p.name || '(...)',
-    contextMessage: 'Zabbix NOC Alerter - ' + t('n_click', resolveLang(config.lang)),
+    contextMessage: ctx,
     priority: 2,
     requireInteraction: sev >= 4
   });
   saveNotifUrl(id, problemUrl(base, p));
 }
 
-function notifyResolved(p, base) {
+function notifyResolved(p, base, extraCount) {
+  const lang = resolveLang(config.lang);
   const id = 'zbxr-' + p.eventid + '-' + Date.now();
+  const ctx = 'Zabbix NOC Alerter - ' + t('n_recovered', lang)
+    + (extraCount > 0 ? ' - ' + t('and_more', lang).replace('{n}', extraCount) : '');
   chrome.notifications.create(id, {
     type: 'basic',
     iconUrl: 'icons/icon128.png',
-    title: '\u2713 ' + t('n_resolved', resolveLang(config.lang)) + ' - ' + (p.host || 'Zabbix'),
+    title: '\u2713 ' + t('n_resolved', lang) + ' - ' + (p.host || 'Zabbix'),
     message: p.name || '(...)',
-    contextMessage: 'Zabbix NOC Alerter - ' + t('n_recovered', resolveLang(config.lang)),
+    contextMessage: ctx,
     priority: 1,
     requireInteraction: false
   });
@@ -755,6 +941,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   }
 
   if (msg.action === 'setConfig') {
+    const oldFilterSig = filterSignature(config);
     config = { ...DEFAULT_CONFIG, ...config, ...(msg.config || {}) };
     config = migrateConfig(config);
     saveConfig();
@@ -763,9 +950,17 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     Object.keys(state.instStatus).forEach(id => { if (!validIds.has(id)) delete state.instStatus[id]; });
     Object.keys(state.authModes).forEach(id => { if (!validIds.has(id)) delete state.authModes[id]; });
     Object.keys(state.groupCache).forEach(id => { if (!validIds.has(id)) delete state.groupCache[id]; });
+    Object.keys(state.lastActive).forEach(id => { if (!validIds.has(id)) delete state.lastActive[id]; });
+    state.loginTokens = {};     // credenciais podem ter mudado -> re-login no proximo poll
+    state.instBackoff = {};     // config mudou (url/credencial/etc.) -> vale tentar de novo ja no proximo poll
     state.workPeriodCache = {}; // re-le o work_period apos mudanca de config (instancias/opcao)
-    state.initialized = false; // re-baseline: nao floodar com o que ja existe
-    state.lastAlarmTs = 0;
+    // Re-baseline SO quando o que muda de fato o conjunto de problemas visiveis mudou (severidade,
+    // exclude, host group, instancias). Salvar uma opcao sem relacao (som, idioma...) nao pode fazer
+    // um problema que apareceu bem naquela hora ser adotado como "ja conhecido" e nunca alertar.
+    if (filterSignature(config) !== oldFilterSig) {
+      state.initialized = false;
+      state.lastAlarmTs = 0;
+    }
     scheduleAlarm();
     startOffscreenTimer();
     pollZabbix().then(() => sendResponse({ ok: true }));
@@ -818,12 +1013,11 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
   if (msg.action === 'ackEvent') {
     (async () => {
+      const inst = (config.instances || []).find(i => i.id === msg.instId);
+      if (!inst) { sendResponse({ ok: false, error: 'Instance not found' }); return; }
       try {
-        const inst = (config.instances || []).find(i => i.id === msg.instId);
-        if (!inst) { sendResponse({ ok: false, error: 'Instance not found' }); return; }
         const base = normalizeUrl(inst.url);
-        let token = (inst.token || '').trim();
-        if (!token) token = await getSessionId(base);
+        const { token } = await getInstAuth(inst);
         if (!token) { sendResponse({ ok: false, error: t('e_nocred', resolveLang(config.lang)) }); return; }
         const r = await apiCall(base, 'event.acknowledge', {
           eventids: [String(msg.eventid)], action: 6, message: msg.message || t('ack_msg', resolveLang(config.lang))
@@ -832,8 +1026,11 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         sendResponse({ ok: true });
         pollZabbix();
       } catch (e) {
+        const emsg = String((e && e.message) || e || t('failed', resolveLang(config.lang)));
+        // sessionid do user.login expirado: invalida o cache pro proximo ack/poll re-logar
+        if (instAuthType(inst) === 'password' && AUTH_ERR_RE.test(emsg)) delete state.loginTokens[inst.id];
         console.error('[zbx] ack FALHOU', msg.eventid, e);
-        sendResponse({ ok: false, error: String((e && e.message) || e || t('failed', resolveLang(config.lang))) });
+        sendResponse({ ok: false, error: emsg });
       }
     })();
     return true;
@@ -843,12 +1040,25 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     (async () => {
       const base = normalizeUrl(msg.zabbixUrl || '');
       if (!base) { sendResponse({ ok: false, error: t('e_nourl', resolveLang(config.lang)) }); return; }
-      let token = (msg.apiToken || '').trim();
-      let via = 'token';
-      if (!token) { token = await getSessionId(base); via = 'session'; }
-      if (!token) { sendResponse({ ok: false, via, error: t('no_session', resolveLang(config.lang)) }); return; }
+      const instId = msg.instId || 'test';
+      // instancia efemera so pro teste; sem authType (mensagem antiga) deriva do token
+      const inst = {
+        id: instId, url: base, label: 'test',
+        authType: msg.authType || ((msg.apiToken || '').trim() ? 'token' : 'session'),
+        token: msg.apiToken || '', username: msg.username || '', password: msg.password || ''
+      };
+      delete state.loginTokens[instId]; // teste sempre re-loga (credenciais podem ter mudado)
+      let token = null, via = instAuthType(inst);
       try {
-        const instId = msg.instId || 'test';
+        ({ token, via } = await getInstAuth(inst));
+      } catch (e) {
+        sendResponse({ ok: false, via, error: String((e && e.message) || e) }); return;
+      }
+      if (!token) {
+        sendResponse({ ok: false, via, error: t(via === 'session' ? 'no_session' : 'e_nocred', resolveLang(config.lang)) });
+        return;
+      }
+      try {
         const r = await apiCall(base, 'problem.get', { output: ['eventid'], limit: 1 }, token, instId);
         const ver = await apiCall(base, 'apiinfo.version', {}, null, instId).catch(() => null);
         sendResponse({ ok: true, via, sample: Array.isArray(r) ? r.length : 0, version: ver });

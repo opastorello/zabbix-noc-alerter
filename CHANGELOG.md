@@ -7,6 +7,54 @@ in `manifest.json`.
 
 ## [Unreleased]
 
+## [0.5.0]
+
+### Added
+- Per-instance authentication mode: browser session (default, unchanged), API
+  token, or username and password (the extension logs in via `user.login`,
+  caches the session and renews it once automatically when it expires). The
+  choice is explicit per instance; a mode with an empty credential is an error,
+  it does not silently fall back to another mode.
+
+### Fixed
+- The severity counts in the popup header could contradict the visible list
+  (for example "42 average" while the list showed none) when there were
+  enough disaster/high problems to fill the internal list cap before lower
+  severities were considered (GitHub #26).
+- Problems from a disabled trigger no longer stay in the list forever; Zabbix
+  does not close them on its own when the trigger is disabled (GitHub #25).
+- The popup's text filter, severity filter, sort and grouping are now
+  remembered between openings, instead of resetting every time (GitHub #25).
+- Resolved-problem notifications now respect mute and meeting mode, not only
+  working hours.
+- A session or credential outage recovering (cookie renewed, token fixed) no
+  longer fires a false alert for every problem that was already known before
+  the outage started.
+- Saving an option unrelated to filtering (volume, language, sounds, ...) no
+  longer risks silently adopting a problem that appeared at that exact moment
+  as "already known", which used to mean it never alerted.
+- The re-alarm could occasionally send a duplicate notification for a
+  just-arrived problem when the sound was turned off.
+- The "unseen" popup badge could undercount a problem that was detected late
+  (for example after a network hiccup), since it compared against the
+  problem's own Zabbix timestamp instead of when the extension actually saw it.
+- `PRIVACY.md` now documents the `tabs` permission and the username/password
+  mode; a CI check keeps it in sync with `manifest.json` going forward.
+
+### Changed
+- A failing Zabbix instance now backs off (30s, doubling up to 5 min) instead
+  of being retried every poll forever; it keeps showing its last known state
+  while backing off, and a config change (fixing the URL or credential)
+  retries right away instead of waiting out the backoff.
+- `trigger.get` failing, or returning an incomplete response, now shows as a
+  visible "host names unavailable" state in the popup instead of silently
+  leaving every row without a host name.
+- "Alert only during working hours" failing to read the schedule from the
+  server is now shown in the popup status bar, not only discoverable by
+  opening Options.
+- A notification batch larger than the per-poll limit now says "and N more"
+  on the last toast instead of the rest silently disappearing.
+
 ## [0.4.0]
 
 ### Added

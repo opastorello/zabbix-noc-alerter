@@ -6,6 +6,21 @@ let cfg = {};
 let lang = 'pt';
 let allProblems = []; // lista completa do ultimo status (base pro filtro client-side)
 let sevFilter = null;  // filtro por severidade ao clicar numa stat (null | 5 | 4 | 3 | 2 | 'info')
+const RENDER_CAP = 300; // teto de linhas desenhadas na lista JA filtrada/ordenada (performance do DOM)
+const VIEW_KEY = 'popupView'; // filtro/ordenacao/agrupamento lembrados entre aberturas do popup
+
+// le a ultima visao salva (filtro de texto, severidade, ordenacao, agrupamento) e chama cb com ela
+function loadView(cb) {
+  chrome.storage.local.get([VIEW_KEY], (r) => cb((r && r[VIEW_KEY]) || {}));
+}
+function saveView() {
+  chrome.storage.local.set({ [VIEW_KEY]: {
+    filterText: document.getElementById('filterBox').value || '',
+    sevFilter,
+    sortBy: document.getElementById('sortBy').value,
+    groupBy: document.getElementById('groupBy').value,
+  } });
+}
 
 document.addEventListener('DOMContentLoaded', () => {
   lang = resolveLang(); applyI18n(lang); // idioma na hora: global + estaticos juntos (sem mistura PT/EN)
@@ -18,16 +33,22 @@ document.addEventListener('DOMContentLoaded', () => {
   });
   document.getElementById('muteBtn').addEventListener('click', toggleMute);
   const fb = document.getElementById('filterBox');
-  fb.addEventListener('input', applyFilter);
-  fb.addEventListener('keydown', (e) => { if (e.key === 'Escape') { fb.value = ''; applyFilter(); } });
+  fb.addEventListener('input', () => { applyFilter(); saveView(); });
+  fb.addEventListener('keydown', (e) => { if (e.key === 'Escape') { fb.value = ''; applyFilter(); saveView(); } });
   document.querySelectorAll('.stats-row .stat').forEach(s => s.addEventListener('click', () => {
     const v = s.dataset.sev === 'info' ? 'info' : Number(s.dataset.sev);
     sevFilter = (sevFilter === v) ? null : v; // clica de novo = limpa
-    applyFilter();
+    applyFilter(); saveView();
   }));
-  document.getElementById('sortBy').addEventListener('change', applyFilter);
-  document.getElementById('groupBy').addEventListener('change', applyFilter);
-  load();
+  document.getElementById('sortBy').addEventListener('change', () => { applyFilter(); saveView(); });
+  document.getElementById('groupBy').addEventListener('change', () => { applyFilter(); saveView(); });
+  loadView((view) => {
+    if (view.filterText) fb.value = view.filterText;
+    if (view.sortBy) document.getElementById('sortBy').value = view.sortBy;
+    if (view.groupBy) document.getElementById('groupBy').value = view.groupBy;
+    if (view.sevFilter !== undefined && view.sevFilter !== null) sevFilter = view.sevFilter;
+    load();
+  });
 });
 
 function load() {
@@ -69,22 +90,27 @@ function render(st) {
   const bar = document.getElementById('statusBar');
   bar.className = 'status-bar';
   const fr = document.getElementById('filterRow');
+  const note = document.getElementById('truncNote');
   if (!st || st.state === 'unconfigured') {
     bar.classList.add('warn'); bar.textContent = t('cfg_url', lang);
-    setCounts({}); fr.style.display = 'none'; renderEmptyState(); return;
+    setCounts({}); fr.style.display = 'none'; note.style.display = 'none'; renderEmptyState(); return;
   }
   if (st.state === 'no-session') {
     bar.classList.add('warn'); bar.textContent = t('no_session', lang);
-    setCounts({}); fr.style.display = 'none'; renderEmptyState(); return;
+    setCounts({}); fr.style.display = 'none'; note.style.display = 'none'; renderEmptyState(); return;
   }
   if (st.state === 'error') {
     bar.classList.add('err'); bar.textContent = t('err', lang) + ': ' + (st.error || '?');
-    setCounts({}); fr.style.display = 'none'; allProblems = []; renderList([]); return;
+    setCounts({}); fr.style.display = 'none'; note.style.display = 'none'; allProblems = []; renderList([]); return;
   }
   // ok - multi-instance status
   bar.classList.add('ok');
   const instInfo = buildInstInfo(st.instStatus);
-  bar.textContent = `${st.total} ${t('active', lang)} ${instInfo} - ${ago(st.ts)}`;
+  // "Alertar so no horario de trabalho" ligado mas settings.get comecou a falhar: o fail-open
+  // continua alertando normalmente, mas o usuario precisa saber que a opcao parou de filtrar
+  // (hardening do IDEAS.md - antes isso era invisivel fora da tela de Opcoes).
+  const wtNote = st.workingTimeError ? ' - ' + t('working_time_broken', lang) : '';
+  bar.textContent = `${st.total} ${t('active', lang)} ${instInfo}${wtNote} - ${ago(st.ts)}`;
   setCounts(st.bySev || {});
   allProblems = st.problems || [];
   fr.style.display = allProblems.length ? '' : 'none'; // so mostra o filtro quando ha o que filtrar
@@ -108,19 +134,37 @@ function applyFilter() {
     sortBy === 'host' ? ((a.host || '').localeCompare(b.host || '') || Number(b.severity) - Number(a.severity))
     : sortBy === 'age' ? (Number(a.clock) - Number(b.clock))
     : (Number(b.severity) - Number(a.severity) || Number(b.clock) - Number(a.clock)));
+  // corte de renderizacao aplicado DEPOIS do filtro/ordenacao, nunca antes: assim a contagem por
+  // severidade (stats-row) e o resultado do filtro clicado sempre batem com o que a lista mostra.
+  const totalMatched = list.length;
+  const truncated = totalMatched > RENDER_CAP;
+  const note = document.getElementById('truncNote');
+  if (truncated) {
+    note.textContent = t('showing_of', lang).replace('{n}', RENDER_CAP).replace('{total}', totalMatched);
+    note.style.display = '';
+    list = list.slice(0, RENDER_CAP);
+  } else {
+    note.style.display = 'none';
+  }
   renderList(list, !!term || sevFilter !== null, document.getElementById('groupBy').value);
 }
 
 function buildInstInfo(instStatus) {
   if (!instStatus) return '';
   const entries = Object.values(instStatus).filter(s => s && s.label);
+  // trigger.get falhou nesta instancia: os hosts sumiram das linhas sem aviso nenhum, entao
+  // avisa aqui em vez de deixar parecendo um bug do Zabbix (hardening do IDEAS.md).
+  const degraded = entries.filter(e => e.degraded);
+  const degradedNote = degraded.length
+    ? ' - ' + t('degraded_hosts', lang) + (entries.length > 1 ? ' (' + degraded.map(e => e.label).join(', ') + ')' : '')
+    : '';
   if (entries.length <= 1) {
     const e = entries[0];
-    return e ? `(${e.via === 'token' ? t('via_token', lang) : t('via_session', lang)})` : '';
+    return e ? `(${t('via_' + (e.via || 'session'), lang)})${degradedNote}` : '';
   }
   // multi: mostra quantas OK
   const ok = entries.filter(e => e.state === 'ok').length;
-  return `(${ok}/${entries.length} OK)`;
+  return `(${ok}/${entries.length} OK)${degradedNote}`;
 }
 
 // Estado vazio acionavel (sem URL / sem sessao): botao primario que abre as Opcoes.

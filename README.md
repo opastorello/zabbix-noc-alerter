@@ -30,7 +30,8 @@ right in your browser, while you work on anything else.
 
 ## Features
 
-- 🛰️ **Multi-instance:** watch up to 8 independent Zabbix servers at once, each with its own URL and optional token; every problem is badged with its instance.
+- 🛰️ **Multi-instance:** watch up to 8 independent Zabbix servers at once, each with its own URL and authentication; every problem is badged with its instance.
+- 🔑 **Three auth modes per instance:** browser session (no credentials), API token, or username and password (the extension logs in and renews the session by itself).
 - 🔊 **Per-severity sound** with volume and a test button.
 - 🔁 **Re-alarm** (sound and notification) while a problem is unacknowledged, until you ack it or mute.
 - 📅 **Alert only during working hours:** reads the Working time from your Zabbix server and stays silent outside it (list and badge keep updating).
@@ -43,9 +44,9 @@ right in your browser, while you work on anything else.
 - 🟢 **Resolved notification** when a problem recovers.
 - 🖱️ **Click a problem** to open the exact event in Zabbix.
 - 🔎 **Filters:** minimum severity, max age, **host groups**, exclude by text, hide suppressed/acked/in-maintenance; optional "unseen" badge.
-- 💾 **Backup:** export and import settings as JSON (instance tokens are never exported).
+- 💾 **Backup:** export and import settings as JSON (instance tokens and passwords are never exported).
 - 🌐 **Languages:** English, Português, Español, picked automatically from your browser.
-- 🔒 **Nothing hardcoded:** the Zabbix URLs (and optional tokens) live only in the options.
+- 🔒 **Nothing hardcoded:** the Zabbix URLs (and credentials) live only in the options.
 
 ## Install
 
@@ -57,22 +58,26 @@ right in your browser, while you work on anything else.
 
 1. Download the latest [release](https://github.com/opastorello/zabbix-noc-alerter/releases/latest) and unzip it (or clone this repo).
 2. Open `chrome://extensions`, turn on **Developer mode**, click **Load unpacked** and pick the folder.
-3. Open the extension **options** and add a Zabbix instance (URL, optional token).
-4. Keep a Zabbix tab logged in. That is all.
+3. Open the extension **options** and add a Zabbix instance (URL and how to authenticate).
+4. If you picked the browser-session mode, keep a Zabbix tab logged in. That is all.
 
 ## How it works
 
-The extension reads the session cookie of the Zabbix tab you are already logged into
-and polls the Zabbix API for active problems. A new one plays a sound and raises a
-notification. No token is required; if your Zabbix does not accept the frontend
-session for API writes (acknowledge), set an API token in the options as a fallback.
+The extension polls the Zabbix API for active problems; a new one plays a sound and
+raises a notification. Each instance authenticates in one of three ways, chosen in
+the options:
+
+- **No authentication (browser session):** reads the session cookie of the Zabbix tab you are already logged into. Nothing to configure; just keep a logged-in tab.
+- **API token:** a token generated in Zabbix (User > API tokens). Works with no Zabbix tab open and survives frontend logouts.
+- **Username and password:** the extension logs into the API (`user.login`) and renews the session by itself when it expires.
 
 **Compatibility:** tested on Zabbix 6.0 to 7.4 (frontend session and all API calls work). Zabbix 8.0 will be validated once it reaches a stable release.
 
 ## Privacy
 
 Talks only to **your Zabbix** (the URL you set) and reads its session cookie locally.
-No analytics, no telemetry, no embedded URL or token.
+Credentials (token or username/password) are stored only in your browser and never
+exported. No analytics, no telemetry, no embedded URL or credential.
 
 ## Screenshots
 
