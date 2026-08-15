@@ -1,0 +1,29 @@
+name: Feature request
+description: An idea for something the extension doesn't do yet.
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        This is an alerting tool watching your Zabbix, not a dashboard - see
+        the "Our differentiators" section in the project's backlog for what
+        stays in scope. If in doubt, describe the problem you're solving
+        rather than the exact feature; there may already be a simpler way.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What are you trying to do, and what gets in the way today?
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What would you like to happen instead?
+
+  - type: input
+    id: instances
+    attributes:
+      label: Auth mode / setup, if relevant
+      placeholder: "e.g. 3 instances, one via API token"

@@ -1,0 +1,85 @@
+name: Bug report
+description: Something isn't working the way it should.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report this. A few quick details below
+        save a lot of back and forth - most of them are already visible in
+        the popup footer or the Options page.
+
+  - type: input
+    id: extension-version
+    attributes:
+      label: Extension version
+      description: Popup footer, e.g. "v0.5.0". Also fine to say "from source" if you built it yourself.
+      placeholder: v0.5.0
+    validations:
+      required: true
+
+  - type: input
+    id: zabbix-version
+    attributes:
+      label: Zabbix version
+      description: Options page, or Help > About in the Zabbix frontend.
+      placeholder: 7.0.4
+    validations:
+      required: true
+
+  - type: input
+    id: browser
+    attributes:
+      label: Browser and version
+      placeholder: Chrome 128 / Edge 128
+    validations:
+      required: true
+
+  - type: dropdown
+    id: auth-mode
+    attributes:
+      label: Authentication mode
+      multiple: true
+      options:
+        - Browser session (no credentials)
+        - API token
+        - Username and password
+        - Not sure
+    validations:
+      required: true
+
+  - type: input
+    id: instances
+    attributes:
+      label: How many Zabbix instances do you have configured?
+      placeholder: "1"
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: What did you expect instead?
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. ...
+        2. ...
+        3. ...
+
+  - type: textarea
+    id: screenshots
+    attributes:
+      label: Screenshots
+      description: Drag and drop images here if you have them - they help a lot (see issues #25/#26 for why).
+
+  - type: textarea
+    id: console
+    attributes:
+      label: Console errors (optional)
+      description: chrome://extensions -> Zabbix NOC Alerter -> "service worker" (background) or right-click the popup -> Inspect (popup/options).
+      render: shell
