@@ -7,6 +7,8 @@ in `manifest.json`.
 
 ## [Unreleased]
 
+## [0.5.0]
+
 ### Added
 - Per-instance authentication mode: browser session (default, unchanged), API
   token, or username and password (the extension logs in via `user.login`,
