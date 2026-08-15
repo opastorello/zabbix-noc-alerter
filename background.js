@@ -86,6 +86,8 @@ const SEV_COLOR = { 5: '#e45959', 4: '#e97659', 3: '#ffa059', 2: '#ffc859', 1: '
 const MAX_PROBLEMS_FETCH = 500;   // teto do problem.get por poll
 const MAX_NOTIFS_PER_POLL = 5;    // notificacoes do navegador por ciclo (anti-flood)
 const MIN_POLL_SEC = 5;           // piso do intervalo de checagem
+const BACKOFF_BASE_SEC = 30;      // 1a espera apos falha de rede/API (dobra a cada falha seguinte)
+const BACKOFF_CAP_SEC = 300;      // teto do backoff (5 min), pra nao parar de tentar de vez
 // notifId -> url do problema, espelhado em chrome.storage.session (sobrevive ao sleep do SW)
 const NOTIF_TTL_MS = 6 * 60 * 60 * 1000; // 6h
 const NOTIF_MAX = 200;
@@ -103,7 +105,9 @@ let state = {
   status: { state: 'unconfigured' },
   instStatus: {},         // instId -> {state, via, error, total, ...} status individual
   groupCache: {},         // instId -> {key, ids} cache da resolucao de host groups (nome -> groupid)
-  workPeriodCache: {}     // instId -> {period|null, ts} cache do work_period (settings.get); null = falhou
+  workPeriodCache: {},    // instId -> {period|null, ts} cache do work_period (settings.get); null = falhou
+  instBackoff: {},        // instId -> {fails, nextAt} backoff exponencial apos erro de rede/API (reseta no sucesso)
+  lastActive: {}          // instId -> ultima lista de "active" com sucesso (reusada enquanto em backoff)
 };
 let _pollInFlight = false, _pollAgain = false; // mutex + coalescing do poll
 
@@ -530,17 +534,43 @@ async function _pollZabbixOnce() {
   }
 }
 
+// backoff exponencial por instancia: so entra em jogo apos erro de REDE/API (login ou problem.get),
+// nunca por falta de credencial/sessao (essas nao custam uma chamada de rede pra falhar de novo).
+function bumpBackoff(instId) {
+  const cur = state.instBackoff[instId] || { fails: 0 };
+  const fails = cur.fails + 1;
+  const delaySec = Math.min(BACKOFF_CAP_SEC, BACKOFF_BASE_SEC * Math.pow(2, fails - 1));
+  state.instBackoff[instId] = { fails, nextAt: Date.now() + delaySec * 1000 };
+}
+function resetBackoff(instId) { delete state.instBackoff[instId]; }
+
+// resultado "reaproveitado" enquanto a instancia esta em backoff: nao bate a rede, mantem o ultimo
+// status de erro e os ultimos problemas conhecidos (sem gerar fresh/resolvido por falta de dado novo).
+function _backoffSkipResult(inst) {
+  const cachedActive = state.lastActive[inst.id] || [];
+  const currentMap = new Map(cachedActive.map(p => [inst.id + ':' + p.eventid, {
+    name: p.name, host: p.host || '', hostid: p.hostid || '', objectid: p.objectid || '',
+    severity: Number(p.severity), instId: inst.id, instLabel: inst.label
+  }]));
+  const instStatus = state.instStatus[inst.id] || { state: 'error', via: 'unknown', error: 'backoff', label: inst.label };
+  return { active: cachedActive, fresh: [], resolved: [], currentMap, instStatus };
+}
+
 // Poll de UMA instancia - retorna {active, fresh, resolved, currentMap, instStatus}
 // _retried: ja re-logou uma vez neste poll (modo usuario/senha; evita loop de re-login)
 async function _pollInstance(inst, _retried) {
   const base = normalizeUrl(inst.url);
   if (!base) return null;
 
+  const bo = state.instBackoff[inst.id];
+  if (bo && bo.nextAt > Date.now()) return _backoffSkipResult(inst);
+
   let token, via;
   try {
     ({ token, via } = await getInstAuth(inst));
   } catch (e) {
     // user.login falhou (senha errada / API fora do ar)
+    bumpBackoff(inst.id);
     const s = { state: 'error', via: 'password', error: String((e && e.message) || e), label: inst.label };
     return { active: [], fresh: [], resolved: [], currentMap: new Map(), instStatus: s };
   }
@@ -580,9 +610,11 @@ async function _pollInstance(inst, _retried) {
       delete state.loginTokens[inst.id];
       return _pollInstance(inst, true);
     }
+    bumpBackoff(inst.id);
     const s = { state: 'error', via, error: emsg, label: inst.label };
     return { active: [], fresh: [], resolved: [], currentMap: new Map(), instStatus: s };
   }
+  resetBackoff(inst.id); // problem.get respondeu: instancia esta viva, zera o backoff
 
   if (!Array.isArray(problems)) problems = [];
 
@@ -629,6 +661,8 @@ async function _pollInstance(inst, _retried) {
       return !exTerms.some(t => hay.includes(t));
     });
   }
+
+  state.lastActive[inst.id] = active; // cache pro backoff: o que reaproveitar se a proxima falhar
 
   // chave composta instId:eventid
   const currentMap = new Map(active.map(p => [inst.id + ':' + p.eventid, {
@@ -826,7 +860,9 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     Object.keys(state.instStatus).forEach(id => { if (!validIds.has(id)) delete state.instStatus[id]; });
     Object.keys(state.authModes).forEach(id => { if (!validIds.has(id)) delete state.authModes[id]; });
     Object.keys(state.groupCache).forEach(id => { if (!validIds.has(id)) delete state.groupCache[id]; });
+    Object.keys(state.lastActive).forEach(id => { if (!validIds.has(id)) delete state.lastActive[id]; });
     state.loginTokens = {};     // credenciais podem ter mudado -> re-login no proximo poll
+    state.instBackoff = {};     // config mudou (url/credencial/etc.) -> vale tentar de novo ja no proximo poll
     state.workPeriodCache = {}; // re-le o work_period apos mudanca de config (instancias/opcao)
     state.initialized = false; // re-baseline: nao floodar com o que ja existe
     state.lastAlarmTs = 0;

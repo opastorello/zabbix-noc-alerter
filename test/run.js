@@ -23,7 +23,7 @@ function resetCaptures() { captured = { sounds: [], notifs: [], cleared: [], bad
 // login: {user, pass, sid} habilita o user.login; requireSid: problem.get exige o sid atual
 // (simula sessao expirada trocando o sid); loginParam: 'username' (moderno) ou 'user' (Zabbix antigo);
 // cookie: valor do zbx_session do navegador (null = sem sessao aberta)
-let scenario = { byBase: {}, version: '6.0.4', groups: {}, lastProblemGet: {}, meetTabs: [], workPeriod: '', login: null, requireSid: false, loginParam: 'username', lastAuth: {}, cookie: null, disabledTriggers: [] };
+let scenario = { byBase: {}, version: '6.0.4', groups: {}, lastProblemGet: {}, meetTabs: [], workPeriod: '', login: null, requireSid: false, loginParam: 'username', lastAuth: {}, cookie: null, disabledTriggers: [], problemGetError: null, problemGetCalls: {} };
 
 // ---------- mock chrome ----------
 const storageLocal = {}, storageSession = {};
@@ -81,7 +81,9 @@ async function fetchMock(url, opts) {
   else if (body.method === 'problem.get') {
     scenario.lastProblemGet[base] = body.params;
     scenario.lastAuth[base] = auth;
+    scenario.problemGetCalls[base] = (scenario.problemGetCalls[base] || 0) + 1;
     if (scenario.requireSid && scenario.login && auth !== scenario.login.sid) return errResp('Session terminated, re-login, please.', '');
+    if (scenario.problemGetError) return errResp(scenario.problemGetError, '');
     result = (scenario.byBase[base] || []).map(p => ({ ...p }));
   }
   else if (body.method === 'hostgroup.get') { const want = (body.params.filter && body.params.filter.name) || []; result = (scenario.groups[base] || []).filter(g => want.includes(g.name)).map(g => ({ groupid: g.groupid })); }
@@ -349,6 +351,46 @@ function P(ev, sev, x = {}) { return { eventid: String(ev), objectid: 't' + ev, 
   await poll();
   assert(!captured.notifs.some(n => /resolv|recuper|resolved/i.test(n.title + ' ' + n.message)), 'em reuniao (meetSuppressNotif): problema resolvido NAO notifica');
   scenario.meetTabs = [];
+
+  console.log('\n--- Integracao: backoff exponencial apos falha de rede/API (hardening) ---');
+  // apiCall tenta 2 modos de auth (header/body) quando falha, entao 1 erro "logico" pode custar
+  // 2 fetches; por isso comparamos POR DELTA (bateu a rede ou nao), nao um numero fixo por poll.
+  const calls = () => scenario.problemGetCalls['https://z1'] || 0;
+  scenario.byBase = { 'https://z1': [P(600, 5)], 'https://z2': [] };
+  await setConfig({ instances: [{ id: 'inst1', label: 'PRD', url: 'https://z1', token: 't1', enabled: true }], minSeverity: 0, repeatAlarm: false });
+  scenario.problemGetCalls = {}; // zera DEPOIS do setConfig (ele mesmo ja dispara um poll interno)
+  await poll();
+  const afterBaseline = calls();
+  assert(afterBaseline > 0, 'poll baseline bate a rede normalmente');
+
+  scenario.problemGetError = 'Internal server error';
+  await poll();
+  const afterFirstFail = calls();
+  assert(afterFirstFail > afterBaseline, '1a falha bate a rede (ainda sem backoff)');
+  eq(BG.getState().instStatus.inst1.state, 'error', '1a falha vira instStatus error');
+  const firstNextAt = BG.getState().instBackoff.inst1.nextAt;
+  assert(firstNextAt > Date.now(), 'backoff arma um proximo horario no futuro apos a 1a falha');
+
+  await poll();
+  eq(calls(), afterFirstFail, 'poll seguinte, ainda dentro do backoff, NAO bate a rede de novo');
+  eq(BG.getState().instStatus.inst1.state, 'error', 'instStatus continua error (reaproveitado) durante o backoff');
+  eq((status().problems || []).map(p => p.eventid), ['600'], 'lista continua mostrando o ultimo conhecido durante o backoff (nao fica vazia)');
+  assert(!captured.notifs.length, 'poll pulado pelo backoff nao gera notificacao nenhuma (nem falso resolvido)');
+
+  BG.getState().instBackoff.inst1.nextAt = Date.now() - 1000; // forca o backoff a vencer
+  await poll();
+  const afterSecondFail = calls();
+  assert(afterSecondFail > afterFirstFail, 'backoff vencido: volta a bater a rede');
+  const secondDelay = BG.getState().instBackoff.inst1.nextAt - Date.now();
+  const firstDelay = firstNextAt - Date.now(); // aproximado, so pra comparar ordem de grandeza
+  assert(secondDelay > firstDelay * 1.5, '2a falha seguida aumenta o backoff (exponencial)');
+
+  scenario.problemGetError = null; // "conserta" a instancia
+  BG.getState().instBackoff.inst1.nextAt = Date.now() - 1000;
+  await poll();
+  assert(calls() > afterSecondFail, 'backoff vencido de novo: bate a rede e desta vez funciona');
+  eq(BG.getState().instStatus.inst1.state, 'ok', 'sucesso volta o instStatus pra ok');
+  assert(BG.getState().instBackoff.inst1 === undefined, 'sucesso reseta o backoff (zera fails/nextAt)');
 
   scenario.byBase = { 'https://z1': [P(400, 5)], 'https://z2': [P(500, 5)] };
   await setConfig({ instances: [
