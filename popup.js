@@ -148,13 +148,19 @@ function applyFilter() {
 function buildInstInfo(instStatus) {
   if (!instStatus) return '';
   const entries = Object.values(instStatus).filter(s => s && s.label);
+  // trigger.get falhou nesta instancia: os hosts sumiram das linhas sem aviso nenhum, entao
+  // avisa aqui em vez de deixar parecendo um bug do Zabbix (hardening do IDEAS.md).
+  const degraded = entries.filter(e => e.degraded);
+  const degradedNote = degraded.length
+    ? ' - ' + t('degraded_hosts', lang) + (entries.length > 1 ? ' (' + degraded.map(e => e.label).join(', ') + ')' : '')
+    : '';
   if (entries.length <= 1) {
     const e = entries[0];
-    return e ? `(${t('via_' + (e.via || 'session'), lang)})` : '';
+    return e ? `(${t('via_' + (e.via || 'session'), lang)})${degradedNote}` : '';
   }
   // multi: mostra quantas OK
   const ok = entries.filter(e => e.state === 'ok').length;
-  return `(${ok}/${entries.length} OK)`;
+  return `(${ok}/${entries.length} OK)${degradedNote}`;
 }
 
 // Estado vazio acionavel (sem URL / sem sessao): botao primario que abre as Opcoes.

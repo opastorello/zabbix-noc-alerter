@@ -644,11 +644,13 @@ async function _pollInstance(inst, _retried) {
   // resolve hosts
   const tids = [...new Set(active.map(p => p.objectid).filter(Boolean))];
   const hostMap = {};
+  let hostsDegraded = false; // trigger.get falhou: hosts/triggers desabilitados ficam invisiveis neste poll
   if (tids.length) {
     try {
       const trg = await apiCall(base, 'trigger.get', { triggerids: tids, output: ['triggerid', 'status'], selectHosts: ['hostid', 'name'] }, token, inst.id);
       (trg || []).forEach(t => { const h = (t.hosts && t.hosts[0]) || {}; hostMap[t.triggerid] = { name: h.name || '', hostid: h.hostid || '', status: t.status }; });
     } catch (e) {
+      hostsDegraded = true;
       console.warn('[zbx][' + inst.label + '] trigger.get falhou:', String((e && e.message) || e));
     }
   }
@@ -695,7 +697,7 @@ async function _pollInstance(inst, _retried) {
     }
   }
 
-  const instStatus = { state: 'ok', via, label: inst.label, total: active.length };
+  const instStatus = { state: 'ok', via, label: inst.label, total: active.length, degraded: hostsDegraded };
   return { active, fresh, resolved, currentMap, instStatus };
 }
 
