@@ -18,5 +18,17 @@ for (const f of files) {
     console.log('  ✗ ' + f + ': ' + e.message);
   }
 }
-console.log(bad ? ('LINT: ' + bad + ' arquivo(s) com erro de sintaxe') : 'LINT: ok (' + files.length + ' arquivos)');
+// PRIVACY.md e o documento voltado a loja: toda permissao do manifest tem que estar
+// documentada la, ou o proximo review da Web Store aponta a divergencia por nos.
+const manifest = JSON.parse(fs.readFileSync(path.join(ROOT, 'manifest.json'), 'utf8'));
+const privacy = fs.readFileSync(path.join(ROOT, 'PRIVACY.md'), 'utf8');
+const missing = (manifest.permissions || []).filter(p => !privacy.includes('**' + p + '**'));
+if (missing.length) {
+  bad++;
+  console.log('  ✗ PRIVACY.md nao documenta a(s) permissao(oes): ' + missing.join(', '));
+} else {
+  console.log('  ✓ PRIVACY.md cobre todas as permissoes do manifest.json');
+}
+
+console.log(bad ? ('LINT: ' + bad + ' problema(s)') : 'LINT: ok (' + files.length + ' arquivos)');
 process.exit(bad ? 1 : 0);
