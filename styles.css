@@ -38,6 +38,7 @@ header h1 { font-size:13px; font-weight:700; color:var(--accent); white-space:no
 .sort-sel { flex-shrink:0; padding:5px 6px; background:var(--bg-card); border:1px solid var(--border); border-radius:4px; color:var(--text-dim); font-size:11px; font-family:inherit; cursor:pointer; }
 .sort-sel:focus { outline:none; border-color:var(--accent); }
 .list { max-height:340px; overflow-y:auto; }
+.trunc-note { text-align:center; padding:3px 4px; margin-bottom:6px; color:var(--text-dim); font-size:9px; }
 .empty { text-align:center; padding:18px 10px; color:var(--text-dim); font-size:11px; }
 .row { display:flex; align-items:center; gap:6px; padding:6px 6px; border-radius:4px; border-left:3px solid var(--border); background:var(--bg-card); margin-bottom:3px; }
 .row.dis { border-left-color:var(--dis); } .row.high { border-left-color:var(--high); } .row.avg { border-left-color:var(--avg); }

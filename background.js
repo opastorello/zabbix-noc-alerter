@@ -84,7 +84,6 @@ const SEV_COLOR = { 5: '#e45959', 4: '#e97659', 3: '#ffa059', 2: '#ffc859', 1: '
 
 // Limites de negocio (auto-documentados)
 const MAX_PROBLEMS_FETCH = 500;   // teto do problem.get por poll
-const MAX_PROBLEMS_UI = 60;       // quantos problemas o popup mostra
 const MAX_NOTIFS_PER_POLL = 5;    // notificacoes do navegador por ciclo (anti-flood)
 const MIN_POLL_SEC = 5;           // piso do intervalo de checagem
 // notifId -> url do problema, espelhado em chrome.storage.session (sobrevive ao sleep do SW)
@@ -456,7 +455,6 @@ async function _pollZabbixOnce() {
     instStatus: state.instStatus,
     problems: allActive
       .sort((a, b) => Number(b.severity) - Number(a.severity) || Number(b.clock) - Number(a.clock))
-      .slice(0, MAX_PROBLEMS_UI)
       .map(p => ({
         eventid: p.eventid, objectid: p.objectid, hostid: p.hostid || '', name: p.name, host: p.host || '',
         severity: Number(p.severity), clock: Number(p.clock), acknowledged: p.acknowledged === '1',

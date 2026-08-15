@@ -211,6 +211,22 @@ function P(ev, sev, x = {}) { return { eventid: String(ev), objectid: 't' + ev, 
   assert(probByEvent('inst1', '100').snoozedUntil > 0, 'snooze afeta inst1:100');
   assert(!probByEvent('inst2', '100').snoozedUntil, 'snooze NAO vaza pra inst2:100');
 
+  console.log('\n--- Integracao: lista truncada nao pode contradizer a contagem por severidade (issue #26) ---');
+  const manyProbs = [];
+  for (let i = 0; i < 70; i++) manyProbs.push(P(1000 + i, 5));
+  for (let i = 0; i < 42; i++) manyProbs.push(P(2000 + i, 3));
+  for (let i = 0; i < 30; i++) manyProbs.push(P(3000 + i, 2));
+  scenario.byBase = { 'https://z1': manyProbs, 'https://z2': [] };
+  await setConfig({ instances: [{ id: 'inst1', label: 'PRD', url: 'https://z1', token: 't1', enabled: true }], minSeverity: 0, repeatAlarm: false });
+  await poll();
+  const stMany = status();
+  eq(stMany.bySev[3], 42, 'bySev conta os 42 avg mesmo com lista grande (142 no total)');
+  eq(stMany.bySev[2], 30, 'bySev conta os 30 warn mesmo com lista grande');
+  const avgInList = (stMany.problems || []).filter(p => Number(p.severity) === 3).length;
+  const warnInList = (stMany.problems || []).filter(p => Number(p.severity) === 2).length;
+  eq(avgInList, 42, 'lista enviada ao popup traz os 42 avg (nao pode sumir so por causa do corte por severidade)');
+  eq(warnInList, 30, 'lista enviada ao popup traz os 30 warn (mesmo motivo)');
+
   console.log('\n--- Integracao: manutencao nao alarma ---');
   scenario.byBase = { 'https://z1': [P(200, 5, { suppression_data: [{ maintenanceid: '7' }] })], 'https://z2': [] };
   await setConfig({ instances: BG.getConfig().instances, minSeverity: 0, ignoreMaintenance: false, soundEnabled: true, repeatAlarm: false });

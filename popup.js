@@ -6,6 +6,7 @@ let cfg = {};
 let lang = 'pt';
 let allProblems = []; // lista completa do ultimo status (base pro filtro client-side)
 let sevFilter = null;  // filtro por severidade ao clicar numa stat (null | 5 | 4 | 3 | 2 | 'info')
+const RENDER_CAP = 300; // teto de linhas desenhadas na lista JA filtrada/ordenada (performance do DOM)
 
 document.addEventListener('DOMContentLoaded', () => {
   lang = resolveLang(); applyI18n(lang); // idioma na hora: global + estaticos juntos (sem mistura PT/EN)
@@ -69,17 +70,18 @@ function render(st) {
   const bar = document.getElementById('statusBar');
   bar.className = 'status-bar';
   const fr = document.getElementById('filterRow');
+  const note = document.getElementById('truncNote');
   if (!st || st.state === 'unconfigured') {
     bar.classList.add('warn'); bar.textContent = t('cfg_url', lang);
-    setCounts({}); fr.style.display = 'none'; renderEmptyState(); return;
+    setCounts({}); fr.style.display = 'none'; note.style.display = 'none'; renderEmptyState(); return;
   }
   if (st.state === 'no-session') {
     bar.classList.add('warn'); bar.textContent = t('no_session', lang);
-    setCounts({}); fr.style.display = 'none'; renderEmptyState(); return;
+    setCounts({}); fr.style.display = 'none'; note.style.display = 'none'; renderEmptyState(); return;
   }
   if (st.state === 'error') {
     bar.classList.add('err'); bar.textContent = t('err', lang) + ': ' + (st.error || '?');
-    setCounts({}); fr.style.display = 'none'; allProblems = []; renderList([]); return;
+    setCounts({}); fr.style.display = 'none'; note.style.display = 'none'; allProblems = []; renderList([]); return;
   }
   // ok - multi-instance status
   bar.classList.add('ok');
@@ -108,6 +110,18 @@ function applyFilter() {
     sortBy === 'host' ? ((a.host || '').localeCompare(b.host || '') || Number(b.severity) - Number(a.severity))
     : sortBy === 'age' ? (Number(a.clock) - Number(b.clock))
     : (Number(b.severity) - Number(a.severity) || Number(b.clock) - Number(a.clock)));
+  // corte de renderizacao aplicado DEPOIS do filtro/ordenacao, nunca antes: assim a contagem por
+  // severidade (stats-row) e o resultado do filtro clicado sempre batem com o que a lista mostra.
+  const totalMatched = list.length;
+  const truncated = totalMatched > RENDER_CAP;
+  const note = document.getElementById('truncNote');
+  if (truncated) {
+    note.textContent = t('showing_of', lang).replace('{n}', RENDER_CAP).replace('{total}', totalMatched);
+    note.style.display = '';
+    list = list.slice(0, RENDER_CAP);
+  } else {
+    note.style.display = 'none';
+  }
   renderList(list, !!term || sevFilter !== null, document.getElementById('groupBy').value);
 }
 
