@@ -666,11 +666,15 @@ async function _pollInstance(inst, _retried) {
   // resolve hosts
   const tids = [...new Set(active.map(p => p.objectid).filter(Boolean))];
   const hostMap = {};
-  let hostsDegraded = false; // trigger.get falhou: hosts/triggers desabilitados ficam invisiveis neste poll
+  let hostsDegraded = false; // trigger.get falhou OU voltou incompleto: hosts ficam invisiveis neste poll
   if (tids.length) {
     try {
       const trg = await apiCall(base, 'trigger.get', { triggerids: tids, output: ['triggerid', 'status'], selectHosts: ['hostid', 'name'] }, token, inst.id);
       (trg || []).forEach(t => { const h = (t.hosts && t.hosts[0]) || {}; hostMap[t.triggerid] = { name: h.name || '', hostid: h.hostid || '', status: t.status }; });
+      // resposta 200 mas faltando algum trigger pedido (ex.: token sem permissao nesses hosts
+      // especificos) tem o MESMO efeito visual de uma falha - linha sem host - entao conta como
+      // degradado tambem, nao so quando a chamada lanca excecao.
+      if (tids.some(id => !hostMap[id])) hostsDegraded = true;
     } catch (e) {
       hostsDegraded = true;
       console.warn('[zbx][' + inst.label + '] trigger.get falhou:', String((e && e.message) || e));

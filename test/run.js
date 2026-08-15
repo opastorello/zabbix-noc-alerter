@@ -23,7 +23,7 @@ function resetCaptures() { captured = { sounds: [], notifs: [], cleared: [], bad
 // login: {user, pass, sid} habilita o user.login; requireSid: problem.get exige o sid atual
 // (simula sessao expirada trocando o sid); loginParam: 'username' (moderno) ou 'user' (Zabbix antigo);
 // cookie: valor do zbx_session do navegador (null = sem sessao aberta)
-let scenario = { byBase: {}, version: '6.0.4', groups: {}, lastProblemGet: {}, meetTabs: [], workPeriod: '', login: null, requireSid: false, loginParam: 'username', lastAuth: {}, cookie: null, disabledTriggers: [], problemGetError: null, problemGetCalls: {}, triggerGetError: null };
+let scenario = { byBase: {}, version: '6.0.4', groups: {}, lastProblemGet: {}, meetTabs: [], workPeriod: '', login: null, requireSid: false, loginParam: 'username', lastAuth: {}, cookie: null, disabledTriggers: [], problemGetError: null, problemGetCalls: {}, triggerGetError: null, hiddenTriggers: [] };
 
 // ---------- mock chrome ----------
 const storageLocal = {}, storageSession = {};
@@ -89,7 +89,8 @@ async function fetchMock(url, opts) {
   else if (body.method === 'hostgroup.get') { const want = (body.params.filter && body.params.filter.name) || []; result = (scenario.groups[base] || []).filter(g => want.includes(g.name)).map(g => ({ groupid: g.groupid })); }
   else if (body.method === 'trigger.get') {
     if (scenario.triggerGetError) return errResp(scenario.triggerGetError, '');
-    result = ((body.params && body.params.triggerids) || []).map(id => ({ triggerid: id, status: scenario.disabledTriggers.includes(id) ? '1' : '0', hosts: [{ hostid: 'h' + id, name: 'host-' + id }] }));
+    const ids = ((body.params && body.params.triggerids) || []).filter(id => !scenario.hiddenTriggers.includes(id));
+    result = ids.map(id => ({ triggerid: id, status: scenario.disabledTriggers.includes(id) ? '1' : '0', hosts: [{ hostid: 'h' + id, name: 'host-' + id }] }));
   }
   else if (body.method === 'event.acknowledge') result = { eventids: body.params.eventids };
   else if (body.method === 'settings.get') {
@@ -252,6 +253,17 @@ function P(ev, sev, x = {}) { return { eventid: String(ev), objectid: 't' + ev, 
   scenario.triggerGetError = null;
   await poll();
   eq(BG.getState().instStatus.inst1.degraded, false, 'trigger.get voltando a funcionar limpa o degraded');
+
+  console.log('\n--- Integracao: trigger.get 200 mas incompleto tambem marca degraded (achado do code-review) ---');
+  scenario.byBase = { 'https://z1': [P(415, 5)], 'https://z2': [] };
+  scenario.hiddenTriggers = ['t415']; // trigger.get responde 200 mas sem esse trigger (permissao?)
+  await setConfig({ instances: [{ id: 'inst1', label: 'PRD', url: 'https://z1', token: 't1', enabled: true }], minSeverity: 0, repeatAlarm: false });
+  await poll();
+  eq(BG.getState().instStatus.inst1.degraded, true, 'trigger.get incompleto (sem excecao) tambem marca degraded');
+  assert((status().problems || []).some(p => p.eventid === '415' && !p.host), 'problema continua na lista (fail-open), so sem host');
+  scenario.hiddenTriggers = [];
+  await poll();
+  eq(BG.getState().instStatus.inst1.degraded, false, 'trigger.get completo de novo: degraded limpa');
 
   console.log('\n--- Integracao: teto de notificacoes por poll avisa "e mais N" (hardening) ---');
   scenario.byBase = { 'https://z1': [], 'https://z2': [] };
