@@ -23,7 +23,7 @@ function resetCaptures() { captured = { sounds: [], notifs: [], cleared: [], bad
 // login: {user, pass, sid} habilita o user.login; requireSid: problem.get exige o sid atual
 // (simula sessao expirada trocando o sid); loginParam: 'username' (moderno) ou 'user' (Zabbix antigo);
 // cookie: valor do zbx_session do navegador (null = sem sessao aberta)
-let scenario = { byBase: {}, version: '6.0.4', groups: {}, lastProblemGet: {}, meetTabs: [], workPeriod: '', login: null, requireSid: false, loginParam: 'username', lastAuth: {}, cookie: null };
+let scenario = { byBase: {}, version: '6.0.4', groups: {}, lastProblemGet: {}, meetTabs: [], workPeriod: '', login: null, requireSid: false, loginParam: 'username', lastAuth: {}, cookie: null, disabledTriggers: [] };
 
 // ---------- mock chrome ----------
 const storageLocal = {}, storageSession = {};
@@ -85,7 +85,7 @@ async function fetchMock(url, opts) {
     result = (scenario.byBase[base] || []).map(p => ({ ...p }));
   }
   else if (body.method === 'hostgroup.get') { const want = (body.params.filter && body.params.filter.name) || []; result = (scenario.groups[base] || []).filter(g => want.includes(g.name)).map(g => ({ groupid: g.groupid })); }
-  else if (body.method === 'trigger.get') result = ((body.params && body.params.triggerids) || []).map(id => ({ triggerid: id, hosts: [{ hostid: 'h' + id, name: 'host-' + id }] }));
+  else if (body.method === 'trigger.get') result = ((body.params && body.params.triggerids) || []).map(id => ({ triggerid: id, status: scenario.disabledTriggers.includes(id) ? '1' : '0', hosts: [{ hostid: 'h' + id, name: 'host-' + id }] }));
   else if (body.method === 'event.acknowledge') result = { eventids: body.params.eventids };
   else if (body.method === 'settings.get') {
     if (scenario.workPeriod === null) return { status: 200, json: async () => ({ jsonrpc: '2.0', error: { message: 'No permissions', data: 'settings.get negado' }, id: 1 }) };
@@ -226,6 +226,16 @@ function P(ev, sev, x = {}) { return { eventid: String(ev), objectid: 't' + ev, 
   const warnInList = (stMany.problems || []).filter(p => Number(p.severity) === 2).length;
   eq(avgInList, 42, 'lista enviada ao popup traz os 42 avg (nao pode sumir so por causa do corte por severidade)');
   eq(warnInList, 30, 'lista enviada ao popup traz os 30 warn (mesmo motivo)');
+
+  console.log('\n--- Integracao: problema de trigger desabilitado nao aparece (issue #25) ---');
+  scenario.byBase = { 'https://z1': [P(400, 5), P(401, 4)], 'https://z2': [] };
+  scenario.disabledTriggers = ['t401']; // trigger do problema 401 foi desabilitado
+  await setConfig({ instances: [{ id: 'inst1', label: 'PRD', url: 'https://z1', token: 't1', enabled: true }], minSeverity: 0, repeatAlarm: false });
+  await poll();
+  const stDisabled = status();
+  eq((stDisabled.problems || []).map(p => p.eventid).sort(), ['400'], 'problema com trigger desabilitado nao entra na lista');
+  eq(stDisabled.total, 1, 'total tambem exclui o problema de trigger desabilitado');
+  scenario.disabledTriggers = [];
 
   console.log('\n--- Integracao: manutencao nao alarma ---');
   scenario.byBase = { 'https://z1': [P(200, 5, { suppression_data: [{ maintenanceid: '7' }] })], 'https://z2': [] };

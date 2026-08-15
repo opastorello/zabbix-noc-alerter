@@ -601,8 +601,8 @@ async function _pollInstance(inst, _retried) {
   const hostMap = {};
   if (tids.length) {
     try {
-      const trg = await apiCall(base, 'trigger.get', { triggerids: tids, output: ['triggerid'], selectHosts: ['hostid', 'name'] }, token, inst.id);
-      (trg || []).forEach(t => { const h = (t.hosts && t.hosts[0]) || {}; hostMap[t.triggerid] = { name: h.name || '', hostid: h.hostid || '' }; });
+      const trg = await apiCall(base, 'trigger.get', { triggerids: tids, output: ['triggerid', 'status'], selectHosts: ['hostid', 'name'] }, token, inst.id);
+      (trg || []).forEach(t => { const h = (t.hosts && t.hosts[0]) || {}; hostMap[t.triggerid] = { name: h.name || '', hostid: h.hostid || '', status: t.status }; });
     } catch (e) {
       console.warn('[zbx][' + inst.label + '] trigger.get falhou:', String((e && e.message) || e));
     }
@@ -612,6 +612,13 @@ async function _pollInstance(inst, _retried) {
     const acks = (p.acknowledges || []).filter(a => a.message && a.message.trim()).sort((a, b) => Number(a.clock) - Number(b.clock));
     p.ackmsg = acks.length ? acks[acks.length - 1].message : '';
   });
+
+  // trigger desabilitado: o Zabbix nao fecha o problema sozinho ao desabilitar o trigger, entao ele
+  // fica orfao na lista para sempre (issue #25). So filtra quando o trigger.get respondeu (fail-open
+  // se falhou acima, ja que ai nao sabemos o status de nenhum).
+  if (tids.length && Object.keys(hostMap).length) {
+    active = active.filter(p => { const h = hostMap[p.objectid]; return !(h && h.status === '1'); });
+  }
 
   // filtro exclude
   const exTerms = (config.excludePatterns || '').split(/[\n,]/).map(s => s.trim().toLowerCase()).filter(Boolean);
