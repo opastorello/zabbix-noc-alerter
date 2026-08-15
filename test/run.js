@@ -128,6 +128,7 @@ function P(ev, sev, x = {}) { return { eventid: String(ev), objectid: 't' + ev, 
 (async () => {
   // =================================================================
   console.log('\n--- Funcoes puras ---');
+  eq(BG.getConfig().volume, 0.25, 'volume padrao (DEFAULT_CONFIG) e 25%, antes de qualquer setConfig');
   eq(sandbox.normalizeUrl('https://z.example.com/'), 'https://z.example.com', 'normalizeUrl tira barra final');
   eq(sandbox.normalizeUrl('  https://z.example.com//  '), 'https://z.example.com', 'normalizeUrl trim + barras');
   eq(sandbox.normalizeUrl(''), '', 'normalizeUrl vazio');

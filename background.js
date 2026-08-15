@@ -21,7 +21,7 @@ const DEFAULT_CONFIG = {
   notificationsEnabled: true,
   notifyResolved: true,   // notificar quando um problema for resolvido (recuperado)
   badgeUnseen: false,     // badge conta so problemas NOVOS (nao vistos) desde a ultima abertura do popup; zera ao abrir
-  volume: 0.8,            // 0..1
+  volume: 0.25,           // 0..1
   soundSev5: 'klaxon',    // disaster
   soundSev4: 'siren',     // high
   soundSev3: 'pulse',     // average

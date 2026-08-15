@@ -344,7 +344,7 @@ function resetSettings() {
   if (!confirm(t('reset_confirm', currentLang))) return;
   const defaults = {
     instances: [], excludePatterns: '', maxAgeDays: 0, pollInterval: 15, repeatAlarm: true, nagNotify: true, repeatInterval: 60,
-    minSeverity: 4, soundEnabled: true, notificationsEnabled: true, notifyResolved: true, volume: 0.8,
+    minSeverity: 4, soundEnabled: true, notificationsEnabled: true, notifyResolved: true, volume: 0.25,
     soundSev5: 'klaxon', soundSev4: 'siren', soundSev3: 'pulse', soundSev2: 'beepbeep', soundSev1: 'chime',
     ignoreAckd: false, ignoreSuppressed: true, ignoreMaintenance: true, badgeUnseen: false, muted: false,
     suppressDuringMeeting: true, meetSuppressNotif: true, meetSuppressSound: true, workingTimeOnly: false, lang: currentLang
