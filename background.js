@@ -501,9 +501,17 @@ async function _pollZabbixOnce() {
       }))
   });
 
-  // badge: total de ativos (padrao) ou so os "nao vistos" desde a ultima abertura do popup
+  // badge: total de ativos (padrao) ou so os "nao vistos" desde a ultima abertura do popup.
+  // Usa firstSeenTs (quando a EXTENSAO descobriu, guardado em state.known), nao p.clock (quando o
+  // problema comecou no Zabbix) - um problema detectado tarde (poll atrasado, backoff) tem que
+  // contar como "nao visto" mesmo se o clock dele for anterior a ultima abertura do popup.
   if (config.badgeUnseen) {
-    const unseen = allActive.filter(p => Number(p.clock) * 1000 > state.lastSeenTs);
+    const unseen = allActive.filter(p => {
+      const entry = state.known.get(p._instId + ':' + p.eventid);
+      // >= (nao so >): descoberto no MESMO milissegundo que o popup abriu ainda conta como nao
+      // visto, o popup nao poderia ter mostrado algo que so foi descoberto naquele instante.
+      return (entry ? entry.firstSeenTs : 0) >= state.lastSeenTs;
+    });
     const unseenMax = unseen.reduce((m, p) => Math.max(m, Number(p.severity)), 0);
     setBadge(unseen.length ? String(unseen.length) : '', SEV_COLOR[unseenMax] || '#97aab3');
   } else {
@@ -521,26 +529,35 @@ async function _pollZabbixOnce() {
     const freshAlert = allFresh.filter(p => !inMaintenance(p) && !isSnoozed(p));
     if (freshAlert.length) {
       const freshMax = freshAlert.reduce((m, p) => Math.max(m, Number(p.severity)), 0);
-      if (config.soundEnabled && !suppressSound) { playSound(soundForSeverity(freshMax), config.volume); state.lastAlarmTs = now; }
+      let alerted = false;
+      if (config.soundEnabled && !suppressSound) { playSound(soundForSeverity(freshMax), config.volume); alerted = true; }
       if (config.notificationsEnabled && !suppressNotif) {
         freshAlert.sort((a, b) => Number(b.severity) - Number(a.severity));
         const shown = freshAlert.slice(0, MAX_NOTIFS_PER_POLL);
         const extra = freshAlert.length - shown.length;
         shown.forEach((p, i) => notify(p, baseFor(p._instId), null, i === shown.length - 1 ? extra : 0));
+        alerted = true;
       }
+      // conta como "acabou de alarmar" mesmo so com notificacao (som desligado): senao o nag, que
+      // usa lastAlarmTs pra saber quando foi o ultimo alerta, achava que estava atrasado e disparava
+      // uma SEGUNDA notificacao (zbx-nag) no mesmo poll pro problema que acabou de chegar.
+      if (alerted) state.lastAlarmTs = now;
     }
     // SNOOZE ACABOU: re-alerta na hora (som + notificacao), mesmo com re-alarme off e sem ser "novo".
     if (justWoke.length) {
       const woke = allActive.filter(p => justWoke.includes(snzKey(p)) && p.acknowledged !== '1' && !inMaintenance(p));
       if (woke.length) {
         const wokeMax = woke.reduce((m, p) => Math.max(m, Number(p.severity)), 0);
-        if (config.soundEnabled && !suppressSound) { playSound(soundForSeverity(wokeMax), config.volume); state.lastAlarmTs = now; }
+        let wokeAlerted = false;
+        if (config.soundEnabled && !suppressSound) { playSound(soundForSeverity(wokeMax), config.volume); wokeAlerted = true; }
         if (config.notificationsEnabled && !suppressNotif) {
           woke.sort((a, b) => Number(b.severity) - Number(a.severity));
           const shownWoke = woke.slice(0, MAX_NOTIFS_PER_POLL);
           const extraWoke = woke.length - shownWoke.length;
           shownWoke.forEach((p, i) => notify(p, baseFor(p._instId), null, i === shownWoke.length - 1 ? extraWoke : 0));
+          wokeAlerted = true;
         }
+        if (wokeAlerted) state.lastAlarmTs = now;
       }
     }
     // NAG: re-alarma enquanto houver problema NAO-ackado (som + notificacao, ate dar ack ou mute)
@@ -588,10 +605,15 @@ function resetBackoff(instId) { delete state.instBackoff[instId]; }
 // tempestade de alertas pra algo que ja era conhecido antes da falha comecar.
 function _carryForward(inst, instStatus) {
   const cachedActive = state.lastActive[inst.id] || [];
-  const currentMap = new Map(cachedActive.map(p => [inst.id + ':' + p.eventid, {
-    name: p.name, host: p.host || '', hostid: p.hostid || '', objectid: p.objectid || '',
-    severity: Number(p.severity), instId: inst.id, instLabel: inst.label
-  }]));
+  const currentMap = new Map(cachedActive.map(p => {
+    const key = inst.id + ':' + p.eventid;
+    const prev = state.known.get(key); // preserva firstSeenTs: nao "descobrimos" nada de novo aqui
+    return [key, {
+      name: p.name, host: p.host || '', hostid: p.hostid || '', objectid: p.objectid || '',
+      severity: Number(p.severity), instId: inst.id, instLabel: inst.label,
+      firstSeenTs: (prev && prev.firstSeenTs) || 0
+    }];
+  }));
   return { active: cachedActive, fresh: [], resolved: [], currentMap, instStatus };
 }
 function _backoffSkipResult(inst) {
@@ -711,11 +733,22 @@ async function _pollInstance(inst, _retried) {
 
   state.lastActive[inst.id] = active; // cache pro backoff: o que reaproveitar se a proxima falhar
 
-  // chave composta instId:eventid
-  const currentMap = new Map(active.map(p => [inst.id + ':' + p.eventid, {
-    name: p.name, host: p.host || '', hostid: p.hostid || '', objectid: p.objectid || '',
-    severity: Number(p.severity), instId: inst.id, instLabel: inst.label
-  }]));
+  // chave composta instId:eventid. firstSeenTs e QUANDO A EXTENSAO DESCOBRIU o problema (nao o
+  // p.clock do Zabbix, que e quando o problema comecou no servidor): usado pelo badge "nao visto"
+  // (badgeUnseen). Se usasse p.clock, um problema antigo detectado tarde (poll atrasado, instancia
+  // em backoff) nunca contaria como "nao visto" mesmo que o usuario nunca tenha visto ele de fato.
+  // Ja conhecido -> mantem o timestamp original. Novo E ja tinha baseline -> "agora" (fresh de
+  // verdade). Novo NA PROPRIA baseline (1o poll, ainda sem state.initialized) -> 0, pra nao inundar
+  // o badge com tudo que ja existia quando a extensao ligou.
+  const currentMap = new Map(active.map(p => {
+    const key = inst.id + ':' + p.eventid;
+    const prev = state.known.get(key);
+    const firstSeenTs = prev ? (prev.firstSeenTs || 0) : (state.initialized ? Date.now() : 0);
+    return [key, {
+      name: p.name, host: p.host || '', hostid: p.hostid || '', objectid: p.objectid || '',
+      severity: Number(p.severity), instId: inst.id, instLabel: inst.label, firstSeenTs
+    }];
+  }));
 
   // novos e resolvidos
   let fresh = [], resolved = [];

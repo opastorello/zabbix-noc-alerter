@@ -580,6 +580,31 @@ function P(ev, sev, x = {}) { return { eventid: String(ev), objectid: 't' + ev, 
   scenario.cookie = null;
 
   // =================================================================
+  console.log('\n--- Integracao: nag nao duplica a notificacao de um problema recem-chegado (hardening) ---');
+  // lastAlarmTs so era tocado pelo ramo de SOM do fresh/woke; com soundEnabled=false ele ficava
+  // parado, o gap do nag vencia sozinho e o MESMO problema recebia uma 2a notificacao (zbx-nag)
+  // no mesmo poll em que a 1a (fresh) acabou de sair.
+  scenario.byBase = { 'https://z1': [], 'https://z2': [] };
+  await setConfig({ instances: [{ id: 'inst1', label: 'PRD', url: 'https://z1', token: 't1', enabled: true }], minSeverity: 0, soundEnabled: false, notificationsEnabled: true, nagNotify: true, repeatAlarm: true, repeatInterval: 60 });
+  await poll(); // baseline vazio
+  BG.getState().lastAlarmTs = Date.now() - 120000; // forca o gap do nag ja ter passado
+  scenario.byBase['https://z1'] = [P(950, 5, { name: 'novo e critico' })];
+  await poll();
+  eq(captured.notifs.length, 1, 'problema recem-chegado gera so 1 notificacao (fresh), nao fresh+nag no mesmo poll');
+
+  console.log('\n--- Integracao: badge "nao visto" usa quando a EXTENSAO descobriu, nao o clock do Zabbix (hardening) ---');
+  // Um problema detectado tarde (poll atrasado, instancia que estava em backoff) tem clock antigo
+  // no Zabbix mesmo sendo a 1a vez que a extensao o ve; comparar contra p.clock fazia ele nunca
+  // contar como "nao visto". firstSeenTs (quando a extensao descobriu) resolve isso.
+  scenario.byBase = { 'https://z1': [], 'https://z2': [] };
+  await setConfig({ instances: [{ id: 'inst1', label: 'PRD', url: 'https://z1', token: 't1', enabled: true }], minSeverity: 0, badgeUnseen: true, repeatAlarm: false });
+  await poll(); // baseline vazio
+  await send({ action: 'getStatus' }); // usuario abre o popup com a lista vazia -> lastSeenTs vira "agora"
+  scenario.byBase['https://z1'] = [P(960, 5, { clock: 1700000000 })]; // clock antigo (relativo a lastSeenTs): deteccao atrasada
+  await poll();
+  eq(captured.badge, '1', 'problema nunca visto pelo usuario conta no badge, mesmo com clock antigo do Zabbix');
+
+  // =================================================================
   console.log('\n' + '='.repeat(44));
   console.log('RESULTADO: ' + pass + ' passaram, ' + fail + ' falharam');
   console.log('='.repeat(44));
