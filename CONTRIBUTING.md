@@ -37,9 +37,15 @@ framework, no dependencies, no install):
 
 - `npm test` runs the suite (`test/run.js`): pure functions (`problemUrl`,
   `migrateConfig`, `normalizeUrl`, `inMaintenance`, filters) plus poll scenarios
-  driven against a mocked Zabbix (multi-instance aggregation, composite
-  `instId:eventid` keys, snooze, maintenance, resolved, disabled instance).
-- `npm run lint` checks the syntax of every source `.js` (`test/lint.js`).
+  driven against a mocked Zabbix and mocked `chrome.*` (multi-instance
+  aggregation, composite `instId:eventid` keys, snooze, maintenance, resolved,
+  disabled/degraded instance, backoff, all three auth modes, working hours,
+  meeting mode). Well over 100 assertions; when fixing a bug, add a test that
+  fails against the old code first.
+- `npm run lint` checks the syntax of every source `.js`, that every
+  `manifest.json` permission is documented in `PRIVACY.md`, and that every
+  i18n key exists in all three languages and is actually used somewhere
+  (`test/lint.js`).
 - `npm run check` runs both. CI runs them on every push and pull request.
 
 ## House rules (please keep these)
@@ -48,10 +54,12 @@ These keep the project simple, private and portable:
 
 - **Manifest V3, vanilla JS.** No external libraries, no bundler, no build step
   for the runtime code.
-- **Nothing hardcoded.** The Zabbix URL and the optional API token live only in
-  the Options (`chrome.storage.local`). Never embed a URL or token in the code.
-- **Auth.** The browser session cookie is the primary auth; an API token is an
-  optional fallback. Keep both paths working.
+- **Nothing hardcoded.** The Zabbix URL and credentials live only in the
+  Options (`chrome.storage.local`). Never embed a URL or credential in the code.
+- **Auth.** Three modes per instance: browser session (default and primary),
+  API token, or username/password (`user.login`, session cached and renewed
+  automatically). Keep all three paths working; a mode with no credential is
+  an error, never a silent fallback to another mode.
 - **Version in one place.** `manifest.json` is the single source of truth; the UI
   reads it via `chrome.runtime.getManifest()`. Do not hardcode a version anywhere else.
 - **i18n.** Every user-visible string goes through `i18n.js` (PT / EN / ES kept in
