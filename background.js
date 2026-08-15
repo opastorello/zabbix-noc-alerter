@@ -591,7 +591,6 @@ async function _pollInstance(inst, _retried) {
     const s = via === 'session'
       ? { state: 'no-session', via, label: inst.label }
       : { state: 'error', via, error: t('e_nocred', resolveLang(config.lang)), label: inst.label };
-    state.instStatus[inst.id] = s;
     return { active: [], fresh: [], resolved: [], currentMap: new Map(), instStatus: s };
   }
 
