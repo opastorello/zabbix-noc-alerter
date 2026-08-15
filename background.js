@@ -60,6 +60,18 @@ function enabledInstances(cfg) {
   return (cfg.instances || []).filter(i => i.enabled && i.url && i.url.trim());
 }
 
+// Assinatura dos campos que mudam QUAIS problemas ficam visiveis (severidade, exclude, host group,
+// instancia ligada/desligada/trocada). Usada por setConfig pra so re-baselinear quando o filtro em
+// si mudou; salvar uma opcao qualquer (som, volume, idioma...) nao pode fazer um problema novo virar
+// "ja conhecido" so por coincidir com a janela do save.
+function filterSignature(cfg) {
+  const inst = (cfg.instances || []).map(i => [i.id, i.url, i.hostGroups || '', !!i.enabled]);
+  return JSON.stringify([
+    Number(cfg.minSeverity) || 0, cfg.excludePatterns || '', !!cfg.ignoreAckd,
+    !!cfg.ignoreMaintenance, !!cfg.ignoreSuppressed, Number(cfg.maxAgeDays) || 0, inst
+  ]);
+}
+
 // Resolve os nomes de host group de uma instancia para groupids, cacheado por instId+nomes.
 // Vazio = sem filtro (observa todos os grupos). Nomes inexistentes sao ignorados (fail-open).
 async function resolveGroupIds(base, token, inst) {
@@ -852,6 +864,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   }
 
   if (msg.action === 'setConfig') {
+    const oldFilterSig = filterSignature(config);
     config = { ...DEFAULT_CONFIG, ...config, ...(msg.config || {}) };
     config = migrateConfig(config);
     saveConfig();
@@ -864,8 +877,13 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     state.loginTokens = {};     // credenciais podem ter mudado -> re-login no proximo poll
     state.instBackoff = {};     // config mudou (url/credencial/etc.) -> vale tentar de novo ja no proximo poll
     state.workPeriodCache = {}; // re-le o work_period apos mudanca de config (instancias/opcao)
-    state.initialized = false; // re-baseline: nao floodar com o que ja existe
-    state.lastAlarmTs = 0;
+    // Re-baseline SO quando o que muda de fato o conjunto de problemas visiveis mudou (severidade,
+    // exclude, host group, instancias). Salvar uma opcao sem relacao (som, idioma...) nao pode fazer
+    // um problema que apareceu bem naquela hora ser adotado como "ja conhecido" e nunca alertar.
+    if (filterSignature(config) !== oldFilterSig) {
+      state.initialized = false;
+      state.lastAlarmTs = 0;
+    }
     scheduleAlarm();
     startOffscreenTimer();
     pollZabbix().then(() => sendResponse({ ok: true }));

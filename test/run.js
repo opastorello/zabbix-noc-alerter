@@ -392,6 +392,27 @@ function P(ev, sev, x = {}) { return { eventid: String(ev), objectid: 't' + ev, 
   eq(BG.getState().instStatus.inst1.state, 'ok', 'sucesso volta o instStatus pra ok');
   assert(BG.getState().instBackoff.inst1 === undefined, 'sucesso reseta o backoff (zera fails/nextAt)');
 
+  console.log('\n--- Integracao: setConfig so re-baseia quando o filtro muda (hardening) ---');
+  scenario.byBase = { 'https://z1': [P(800, 5)], 'https://z2': [] };
+  await setConfig({ instances: [{ id: 'inst1', label: 'PRD', url: 'https://z1', token: 't1', enabled: true }], minSeverity: 0, soundEnabled: true, notificationsEnabled: true, repeatAlarm: false });
+  await poll(); // baseline
+  scenario.byBase['https://z1'].push(P(801, 5, { name: 'chegou bem na hora do save' }));
+  // salva uma opcao QUE NAO MUDA quais problemas ficam visiveis (so o volume) -> nao pode
+  // "engolir" o 801 que apareceu nessa janela. setConfig ja dispara um poll interno, entao o
+  // efeito (se houver) aparece nessa chamada mesmo, nao precisa de um poll() extra depois.
+  resetCaptures();
+  await setConfig({ instances: BG.getConfig().instances, minSeverity: 0, soundEnabled: true, notificationsEnabled: true, repeatAlarm: false, volume: 42 });
+  assert(captured.sounds.length === 1 || captured.notifs.length >= 1, 'opcao sem relacao com o filtro nao re-baseia: 801 ainda alerta como novo');
+
+  scenario.byBase = { 'https://z1': [P(900, 5), P(901, 5, { name: 'barulhento' })], 'https://z2': [] };
+  await setConfig({ instances: [{ id: 'inst1', label: 'PRD', url: 'https://z1', token: 't1', enabled: true }], minSeverity: 0, soundEnabled: true, notificationsEnabled: true, repeatAlarm: false, excludePatterns: 'barulhento' });
+  await poll(); // baseline: 901 fica de fora pelo exclude, so 900 e "conhecido"
+  // remove o exclude -> 901 fica visivel; ISSO E mudanca de filtro, entao tem que re-baselinear
+  // (901 nao pode disparar alerta so por ter ficado visivel de novo).
+  resetCaptures();
+  await setConfig({ instances: BG.getConfig().instances, minSeverity: 0, soundEnabled: true, notificationsEnabled: true, repeatAlarm: false, excludePatterns: '' });
+  assert(!captured.sounds.length && !captured.notifs.length, 'mudanca de filtro (exclude) ainda re-baseia: 901 recem-visivel nao alerta');
+
   scenario.byBase = { 'https://z1': [P(400, 5)], 'https://z2': [P(500, 5)] };
   await setConfig({ instances: [
     { id: 'inst1', label: 'PRD', url: 'https://z1', token: 't1', enabled: true },
