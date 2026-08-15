@@ -533,6 +533,24 @@ function P(ev, sev, x = {}) { return { eventid: String(ev), objectid: 't' + ev, 
   await setConfig({ instances: [{ id: 'inst1', label: 'PRD', url: 'https://z1', authType: 'token', token: '', enabled: true }], minSeverity: 0, repeatAlarm: false });
   eq(BG.getState().instStatus.inst1.state, 'error', 'modo token sem token: error (nao usa a sessao como fallback)');
 
+  console.log('\n--- Integracao: sessao caida e recuperada nao gera tempestade de alertas (hardening, achado do code-review) ---');
+  scenario.cookie = zbxCookie('sess-abc');
+  scenario.byBase = { 'https://z1': [P(960, 5)] };
+  await setConfig({ instances: [{ id: 'inst1', label: 'PRD', url: 'https://z1', authType: 'session', enabled: true }], minSeverity: 0, soundEnabled: true, notificationsEnabled: true, repeatAlarm: false });
+  await poll(); // baseline com sessao ok
+  eq(knownKeys(), ['inst1:960'], 'baseline: problema 960 conhecido com sessao ok');
+
+  scenario.cookie = null; // sessao cai (cookie some, ex.: logout em outra aba)
+  await poll(); await poll(); await poll(); // varios polls seguidos sem sessao
+  eq(BG.getState().instStatus.inst1.state, 'no-session', 'sessao caida: no-session nos polls seguintes');
+  assert((status().problems || []).some(p => p.eventid === '960'), 'lista continua mostrando o 960 (ultimo conhecido) mesmo com a sessao caida, nao fica vazia');
+  assert(!captured.sounds.length && !captured.notifs.length, 'sessao caida: nenhum alerta falso enquanto esta fora do ar');
+
+  scenario.cookie = zbxCookie('sess-nova'); // usuario loga de novo em outra aba
+  await poll();
+  eq(BG.getState().instStatus.inst1.state, 'ok', 'sessao recuperada: volta a ok');
+  assert(!captured.sounds.length && !captured.notifs.length, 'sessao recuperada: 960 continua ativo mas NAO dispara alerta (nao e um problema novo)');
+
   // testConnection no modo sessao
   const tcSess = await send({ action: 'testConnection', zabbixUrl: 'https://z1', authType: 'session', instId: 'test' });
   eq([tcSess.ok, tcSess.via], [true, 'session'], 'testConnection: modo sessao ok, via=session');

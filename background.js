@@ -574,16 +574,21 @@ function bumpBackoff(instId) {
 }
 function resetBackoff(instId) { delete state.instBackoff[instId]; }
 
-// resultado "reaproveitado" enquanto a instancia esta em backoff: nao bate a rede, mantem o ultimo
-// status de erro e os ultimos problemas conhecidos (sem gerar fresh/resolvido por falta de dado novo).
-function _backoffSkipResult(inst) {
+// resultado "reaproveitado" em QUALQUER falha (backoff pulado, sessao caida, erro de rede): nunca
+// bate a rede pra montar isso, reusa a ultima lista de problemas conhecida como se nada tivesse
+// mudado. Sem isso, cada falha zera currentMap -> state.known perde a instancia -> quando ela volta
+// (sessao renovada, credencial corrigida), todo problema ainda ativo parece "novo" e dispara uma
+// tempestade de alertas pra algo que ja era conhecido antes da falha comecar.
+function _carryForward(inst, instStatus) {
   const cachedActive = state.lastActive[inst.id] || [];
   const currentMap = new Map(cachedActive.map(p => [inst.id + ':' + p.eventid, {
     name: p.name, host: p.host || '', hostid: p.hostid || '', objectid: p.objectid || '',
     severity: Number(p.severity), instId: inst.id, instLabel: inst.label
   }]));
-  const instStatus = state.instStatus[inst.id] || { state: 'error', via: 'unknown', error: 'backoff', label: inst.label };
   return { active: cachedActive, fresh: [], resolved: [], currentMap, instStatus };
+}
+function _backoffSkipResult(inst) {
+  return _carryForward(inst, state.instStatus[inst.id] || { state: 'error', via: 'unknown', error: 'backoff', label: inst.label });
 }
 
 // Poll de UMA instancia - retorna {active, fresh, resolved, currentMap, instStatus}
@@ -602,14 +607,14 @@ async function _pollInstance(inst, _retried) {
     // user.login falhou (senha errada / API fora do ar)
     bumpBackoff(inst.id);
     const s = { state: 'error', via: 'password', error: String((e && e.message) || e), label: inst.label };
-    return { active: [], fresh: [], resolved: [], currentMap: new Map(), instStatus: s };
+    return _carryForward(inst, s);
   }
   if (!token) {
     // sessao: sem cookie -> "faca login"; usuario/senha ou token: campos vazios -> sem credencial
     const s = via === 'session'
       ? { state: 'no-session', via, label: inst.label }
       : { state: 'error', via, error: t('e_nocred', resolveLang(config.lang)), label: inst.label };
-    return { active: [], fresh: [], resolved: [], currentMap: new Map(), instStatus: s };
+    return _carryForward(inst, s);
   }
 
   let problems;
@@ -632,7 +637,7 @@ async function _pollInstance(inst, _retried) {
     const emsg = String((e && e.message) || e);
     if (via === 'session' && AUTH_ERR_RE.test(emsg)) {
       const s = { state: 'no-session', via, label: inst.label };
-      return { active: [], fresh: [], resolved: [], currentMap: new Map(), instStatus: s };
+      return _carryForward(inst, s);
     }
     if (via === 'password' && !_retried && AUTH_ERR_RE.test(emsg)) {
       // sessionid do user.login expirou -> descarta o cache e re-loga UMA vez no mesmo poll
@@ -641,7 +646,7 @@ async function _pollInstance(inst, _retried) {
     }
     bumpBackoff(inst.id);
     const s = { state: 'error', via, error: emsg, label: inst.label };
-    return { active: [], fresh: [], resolved: [], currentMap: new Map(), instStatus: s };
+    return _carryForward(inst, s);
   }
   resetBackoff(inst.id); // problem.get respondeu: instancia esta viva, zera o backoff
 
