@@ -7,6 +7,20 @@ let lang = 'pt';
 let allProblems = []; // lista completa do ultimo status (base pro filtro client-side)
 let sevFilter = null;  // filtro por severidade ao clicar numa stat (null | 5 | 4 | 3 | 2 | 'info')
 const RENDER_CAP = 300; // teto de linhas desenhadas na lista JA filtrada/ordenada (performance do DOM)
+const VIEW_KEY = 'popupView'; // filtro/ordenacao/agrupamento lembrados entre aberturas do popup
+
+// le a ultima visao salva (filtro de texto, severidade, ordenacao, agrupamento) e chama cb com ela
+function loadView(cb) {
+  chrome.storage.local.get([VIEW_KEY], (r) => cb((r && r[VIEW_KEY]) || {}));
+}
+function saveView() {
+  chrome.storage.local.set({ [VIEW_KEY]: {
+    filterText: document.getElementById('filterBox').value || '',
+    sevFilter,
+    sortBy: document.getElementById('sortBy').value,
+    groupBy: document.getElementById('groupBy').value,
+  } });
+}
 
 document.addEventListener('DOMContentLoaded', () => {
   lang = resolveLang(); applyI18n(lang); // idioma na hora: global + estaticos juntos (sem mistura PT/EN)
@@ -19,16 +33,22 @@ document.addEventListener('DOMContentLoaded', () => {
   });
   document.getElementById('muteBtn').addEventListener('click', toggleMute);
   const fb = document.getElementById('filterBox');
-  fb.addEventListener('input', applyFilter);
-  fb.addEventListener('keydown', (e) => { if (e.key === 'Escape') { fb.value = ''; applyFilter(); } });
+  fb.addEventListener('input', () => { applyFilter(); saveView(); });
+  fb.addEventListener('keydown', (e) => { if (e.key === 'Escape') { fb.value = ''; applyFilter(); saveView(); } });
   document.querySelectorAll('.stats-row .stat').forEach(s => s.addEventListener('click', () => {
     const v = s.dataset.sev === 'info' ? 'info' : Number(s.dataset.sev);
     sevFilter = (sevFilter === v) ? null : v; // clica de novo = limpa
-    applyFilter();
+    applyFilter(); saveView();
   }));
-  document.getElementById('sortBy').addEventListener('change', applyFilter);
-  document.getElementById('groupBy').addEventListener('change', applyFilter);
-  load();
+  document.getElementById('sortBy').addEventListener('change', () => { applyFilter(); saveView(); });
+  document.getElementById('groupBy').addEventListener('change', () => { applyFilter(); saveView(); });
+  loadView((view) => {
+    if (view.filterText) fb.value = view.filterText;
+    if (view.sortBy) document.getElementById('sortBy').value = view.sortBy;
+    if (view.groupBy) document.getElementById('groupBy').value = view.groupBy;
+    if (view.sevFilter !== undefined && view.sevFilter !== null) sevFilter = view.sevFilter;
+    load();
+  });
 });
 
 function load() {
