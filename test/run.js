@@ -233,6 +233,17 @@ function P(ev, sev, x = {}) { return { eventid: String(ev), objectid: 't' + ev, 
   eq(avgInList, 42, 'lista enviada ao popup traz os 42 avg (nao pode sumir so por causa do corte por severidade)');
   eq(warnInList, 30, 'lista enviada ao popup traz os 30 warn (mesmo motivo)');
 
+  console.log('\n--- Integracao: teto de gravacao no storage (achado do code-review) ---');
+  const hugeProbs = [];
+  for (let i = 0; i < 2100; i++) hugeProbs.push(P(9000 + i, 3));
+  scenario.byBase = { 'https://z1': hugeProbs, 'https://z2': [] };
+  await setConfig({ instances: [{ id: 'inst1', label: 'PRD', url: 'https://z1', token: 't1', enabled: true }], minSeverity: 0, repeatAlarm: false });
+  await poll();
+  const stHuge = status();
+  eq(stHuge.total, 2100, 'total continua exato mesmo passando do teto de gravacao (bySev/total nao sao afetados)');
+  eq(stHuge.bySev[3], 2100, 'bySev tambem continua exato');
+  assert((stHuge.problems || []).length <= 2000, 'a lista gravada no storage tem um teto (MAX_PROBLEMS_STORE), nao cresce sem limite');
+
   console.log('\n--- Integracao: problema de trigger desabilitado nao aparece (issue #25) ---');
   scenario.byBase = { 'https://z1': [P(400, 5), P(401, 4)], 'https://z2': [] };
   scenario.disabledTriggers = ['t401']; // trigger do problema 401 foi desabilitado

@@ -95,7 +95,10 @@ const SEV_NAME = { 0: 'not_classified', 1: 'info', 2: 'warning', 3: 'average', 4
 const SEV_COLOR = { 5: '#e45959', 4: '#e97659', 3: '#ffa059', 2: '#ffc859', 1: '#7499ff', 0: '#97aab3' };
 
 // Limites de negocio (auto-documentados)
-const MAX_PROBLEMS_FETCH = 500;   // teto do problem.get por poll
+const MAX_PROBLEMS_FETCH = 500;   // teto do problem.get por poll, POR INSTANCIA
+const MAX_PROBLEMS_STORE = 2000;  // teto do total (todas as instancias somadas) gravado no storage
+                                   // a cada poll; bem acima do uso real, so pra nao escrever um payload
+                                   // sem limite no pior caso (8 instancias todas perto do teto acima).
 const MAX_NOTIFS_PER_POLL = 5;    // notificacoes do navegador por ciclo (anti-flood)
 const MIN_POLL_SEC = 5;           // piso do intervalo de checagem
 const BACKOFF_BASE_SEC = 30;      // 1a espera apos falha de rede/API (dobra a cada falha seguinte)
@@ -476,6 +479,10 @@ async function _pollZabbixOnce() {
     offHours = !wt.working;
   }
 
+  const sortedActive = allActive.sort((a, b) => Number(b.severity) - Number(a.severity) || Number(b.clock) - Number(a.clock));
+  if (sortedActive.length > MAX_PROBLEMS_STORE) {
+    console.warn('[zbx] ' + sortedActive.length + ' problemas ativos, gravando so os primeiros ' + MAX_PROBLEMS_STORE + ' (MAX_PROBLEMS_STORE)');
+  }
   setStatus({
     state: 'ok',
     total: allActive.length,
@@ -483,8 +490,8 @@ async function _pollZabbixOnce() {
     freshCount: allFresh.length,
     instStatus: state.instStatus,
     workingTimeError,
-    problems: allActive
-      .sort((a, b) => Number(b.severity) - Number(a.severity) || Number(b.clock) - Number(a.clock))
+    problems: sortedActive
+      .slice(0, MAX_PROBLEMS_STORE)
       .map(p => ({
         eventid: p.eventid, objectid: p.objectid, hostid: p.hostid || '', name: p.name, host: p.host || '',
         severity: Number(p.severity), clock: Number(p.clock), acknowledged: p.acknowledged === '1',
