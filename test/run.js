@@ -41,7 +41,7 @@ const chrome = {
   },
   action: { setBadgeText: ({ text }) => { captured.badge = text; }, setBadgeBackgroundColor: () => {} },
   notifications: {
-    create: (id, opts) => { captured.notifs.push({ id, title: opts && opts.title, message: opts && opts.message }); },
+    create: (id, opts) => { captured.notifs.push({ id, title: opts && opts.title, message: opts && opts.message, contextMessage: opts && opts.contextMessage }); },
     clear: (id) => { captured.cleared.push(id); },
     onClicked: { addListener: () => {} }, onClosed: { addListener: () => {} },
   },
@@ -252,6 +252,17 @@ function P(ev, sev, x = {}) { return { eventid: String(ev), objectid: 't' + ev, 
   scenario.triggerGetError = null;
   await poll();
   eq(BG.getState().instStatus.inst1.degraded, false, 'trigger.get voltando a funcionar limpa o degraded');
+
+  console.log('\n--- Integracao: teto de notificacoes por poll avisa "e mais N" (hardening) ---');
+  scenario.byBase = { 'https://z1': [], 'https://z2': [] };
+  await setConfig({ instances: [{ id: 'inst1', label: 'PRD', url: 'https://z1', token: 't1', enabled: true }], minSeverity: 0, soundEnabled: true, notificationsEnabled: true, repeatAlarm: false });
+  await poll(); // baseline vazio
+  scenario.byBase['https://z1'] = Array.from({ length: 8 }, (_, i) => P(420 + i, 5, { name: 'p' + i }));
+  await poll();
+  eq(captured.notifs.length, 5, 'so MAX_NOTIFS_PER_POLL notificacoes de fato aparecem (anti-flood, ja existente)');
+  const last = captured.notifs[captured.notifs.length - 1];
+  assert(/mais 3|3 more|3 más/.test(last.contextMessage || ''), 'a ultima notificacao do lote avisa quantas ficaram de fora (3)');
+  assert(!/mais|more|más/.test(captured.notifs[0].contextMessage || ''), 'as notificacoes anteriores do lote NAO tem o aviso (so a ultima)');
 
   console.log('\n--- Integracao: manutencao nao alarma ---');
   scenario.byBase = { 'https://z1': [P(200, 5, { suppression_data: [{ maintenanceid: '7' }] })], 'https://z2': [] };

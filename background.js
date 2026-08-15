@@ -505,7 +505,9 @@ async function _pollZabbixOnce() {
       if (config.soundEnabled && !suppressSound) { playSound(soundForSeverity(freshMax), config.volume); state.lastAlarmTs = now; }
       if (config.notificationsEnabled && !suppressNotif) {
         freshAlert.sort((a, b) => Number(b.severity) - Number(a.severity));
-        freshAlert.slice(0, MAX_NOTIFS_PER_POLL).forEach(p => notify(p, baseFor(p._instId)));
+        const shown = freshAlert.slice(0, MAX_NOTIFS_PER_POLL);
+        const extra = freshAlert.length - shown.length;
+        shown.forEach((p, i) => notify(p, baseFor(p._instId), null, i === shown.length - 1 ? extra : 0));
       }
     }
     // SNOOZE ACABOU: re-alerta na hora (som + notificacao), mesmo com re-alarme off e sem ser "novo".
@@ -516,7 +518,9 @@ async function _pollZabbixOnce() {
         if (config.soundEnabled && !suppressSound) { playSound(soundForSeverity(wokeMax), config.volume); state.lastAlarmTs = now; }
         if (config.notificationsEnabled && !suppressNotif) {
           woke.sort((a, b) => Number(b.severity) - Number(a.severity));
-          woke.slice(0, MAX_NOTIFS_PER_POLL).forEach(p => notify(p, baseFor(p._instId)));
+          const shownWoke = woke.slice(0, MAX_NOTIFS_PER_POLL);
+          const extraWoke = woke.length - shownWoke.length;
+          shownWoke.forEach((p, i) => notify(p, baseFor(p._instId), null, i === shownWoke.length - 1 ? extraWoke : 0));
         }
       }
     }
@@ -542,7 +546,9 @@ async function _pollZabbixOnce() {
   // RESOLVIDOS: segue as mesmas regras de silencio dos alertas (mute, off hours, modo reuniao),
   // em vez de checar so o off hours - senao um resolvido ainda notifica mutado ou em call.
   if (!config.muted && config.notifyResolved && config.notificationsEnabled && !suppressNotif && allResolved.length) {
-    allResolved.slice(0, MAX_NOTIFS_PER_POLL).forEach(p => notifyResolved(p, baseFor(p.instId)));
+    const shownResolved = allResolved.slice(0, MAX_NOTIFS_PER_POLL);
+    const extraResolved = allResolved.length - shownResolved.length;
+    shownResolved.forEach((p, i) => notifyResolved(p, baseFor(p.instId), i === shownResolved.length - 1 ? extraResolved : 0));
   }
 }
 
@@ -746,31 +752,40 @@ function dropNotifUrl(id) {
   } catch (e) {}
 }
 
-function notify(p, base, fixedId) {
+// extraCount: quantos problemas do mesmo lote ficaram de fora do teto MAX_NOTIFS_PER_POLL
+// (anti-flood). Sem isso o corte e silencioso: contMessage avisa "e mais N" na ultima notificacao
+// do lote, em vez do usuario achar que so aqueles couberam de fato apareceram.
+function notify(p, base, fixedId, extraCount) {
   const sev = Number(p.severity);
+  const lang = resolveLang(config.lang);
   // fixedId (ex.: 'zbx-nag') reusa a MESMA notificacao a cada ciclo do re-alarme,
   // atualizando no lugar em vez de empilhar uma nova notificacao a cada toque.
   const id = fixedId || ('zbx-' + p.eventid + '-' + Date.now());
+  const ctx = 'Zabbix NOC Alerter - ' + t('n_click', lang)
+    + (extraCount > 0 ? ' - ' + t('and_more', lang).replace('{n}', extraCount) : '');
   chrome.notifications.create(id, {
     type: 'basic',
     iconUrl: 'icons/icon128.png',
-    title: '[' + t('nsev' + sev, resolveLang(config.lang)).toUpperCase() + '] ' + (p.host || 'Zabbix'),
+    title: '[' + t('nsev' + sev, lang).toUpperCase() + '] ' + (p.host || 'Zabbix'),
     message: p.name || '(...)',
-    contextMessage: 'Zabbix NOC Alerter - ' + t('n_click', resolveLang(config.lang)),
+    contextMessage: ctx,
     priority: 2,
     requireInteraction: sev >= 4
   });
   saveNotifUrl(id, problemUrl(base, p));
 }
 
-function notifyResolved(p, base) {
+function notifyResolved(p, base, extraCount) {
+  const lang = resolveLang(config.lang);
   const id = 'zbxr-' + p.eventid + '-' + Date.now();
+  const ctx = 'Zabbix NOC Alerter - ' + t('n_recovered', lang)
+    + (extraCount > 0 ? ' - ' + t('and_more', lang).replace('{n}', extraCount) : '');
   chrome.notifications.create(id, {
     type: 'basic',
     iconUrl: 'icons/icon128.png',
-    title: '\u2713 ' + t('n_resolved', resolveLang(config.lang)) + ' - ' + (p.host || 'Zabbix'),
+    title: '\u2713 ' + t('n_resolved', lang) + ' - ' + (p.host || 'Zabbix'),
     message: p.name || '(...)',
-    contextMessage: 'Zabbix NOC Alerter - ' + t('n_recovered', resolveLang(config.lang)),
+    contextMessage: ctx,
     priority: 1,
     requireInteraction: false
   });
