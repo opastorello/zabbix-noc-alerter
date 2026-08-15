@@ -321,12 +321,14 @@ function P(ev, sev, x = {}) { return { eventid: String(ev), objectid: 't' + ev, 
   scenario.byBase['https://z1'].push(P(802, 5, { name: 'dentro do horario' }));
   await poll();
   assert(captured.sounds.length === 1 && captured.notifs.length >= 1, 'dentro do working time: som e notificacao normais');
-  // settings.get sem permissao: fail-open (alerta normalmente)
+  assert(!status().workingTimeError, 'settings.get funcionando: sem aviso de working time quebrado (hardening)');
+  // settings.get sem permissao: fail-open (alerta normalmente), mas AVISA que a opcao parou de filtrar
   scenario.workPeriod = null;
   await setConfig({ instances: BG.getConfig().instances, minSeverity: 0, soundEnabled: true, notificationsEnabled: true, repeatAlarm: false, workingTimeOnly: true });
   scenario.byBase['https://z1'].push(P(803, 5, { name: 'sem permissao' }));
   await poll();
   assert(captured.sounds.length === 1 && captured.notifs.length >= 1, 'settings.get sem permissao: fail-open (alerta normal)');
+  assert(!!status().workingTimeError, 'settings.get sem permissao: status avisa que o working time parou de funcionar (hardening)');
   // opcao desligada: nem consulta o work_period
   scenario.workPeriod = '1-7,00:00-00:00';
   await setConfig({ instances: BG.getConfig().instances, minSeverity: 0, soundEnabled: true, notificationsEnabled: true, repeatAlarm: false, workingTimeOnly: false });

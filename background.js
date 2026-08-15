@@ -389,11 +389,13 @@ async function getWorkPeriods(instances) {
 }
 
 // "Em horario" se estiver dentro do work_period de QUALQUER instancia legivel (uniao).
-// Fail-open: nenhuma legivel = true (nunca deixar de alertar por falha de leitura).
+// Fail-open: nenhuma legivel = working=true (nunca deixar de alertar por falha de leitura), mas
+// devolve o erro pra quem chama poder AVISAR que a opcao parou de fazer efeito (hardening do
+// IDEAS.md - antes o fail-open era silencioso e ninguem percebia que settings.get comecou a falhar).
 async function isWorkingTime(instances) {
-  const { list } = await getWorkPeriods(instances);
-  if (!list.length) return true;
-  return list.some(i => inWorkPeriod(i.period, new Date()));
+  const { list, error } = await getWorkPeriods(instances);
+  if (!list.length) return { working: true, error };
+  return { working: list.some(i => inWorkPeriod(i.period, new Date())), error: '' };
 }
 
 async function isInMeeting() {
@@ -463,12 +465,24 @@ async function _pollZabbixOnce() {
   }
   if (_snzChanged) saveSnoozes();
 
+  // fora do Working time do Zabbix (se a opcao estiver ligada): silencia som E notificacao;
+  // a lista, o badge e o status continuam atualizando normalmente. Calculado ANTES do setStatus
+  // pra poder avisar no popup quando a leitura falhar (fail-open continua valendo pro alerta).
+  let workingTimeError = '';
+  let offHours = false;
+  if (config.workingTimeOnly) {
+    const wt = await isWorkingTime(instances);
+    workingTimeError = wt.error;
+    offHours = !wt.working;
+  }
+
   setStatus({
     state: 'ok',
     total: allActive.length,
     bySev,
     freshCount: allFresh.length,
     instStatus: state.instStatus,
+    workingTimeError,
     problems: allActive
       .sort((a, b) => Number(b.severity) - Number(a.severity) || Number(b.clock) - Number(a.clock))
       .map(p => ({
@@ -492,9 +506,7 @@ async function _pollZabbixOnce() {
   // dispara alerta
   const now = Date.now();
   const inMeeting = config.suppressDuringMeeting && await isInMeeting();
-  // fora do Working time do Zabbix (se a opcao estiver ligada): silencia som E notificacao;
-  // a lista, o badge e o status continuam atualizando normalmente.
-  const offHours = config.workingTimeOnly && !(await isWorkingTime(instances));
+  // offHours ja calculado acima (antes do setStatus)
   const suppressSound = offHours || (inMeeting && config.meetSuppressSound);
   const suppressNotif = offHours || (inMeeting && config.meetSuppressNotif);
   if (!config.muted) {

@@ -106,7 +106,11 @@ function render(st) {
   // ok - multi-instance status
   bar.classList.add('ok');
   const instInfo = buildInstInfo(st.instStatus);
-  bar.textContent = `${st.total} ${t('active', lang)} ${instInfo} - ${ago(st.ts)}`;
+  // "Alertar so no horario de trabalho" ligado mas settings.get comecou a falhar: o fail-open
+  // continua alertando normalmente, mas o usuario precisa saber que a opcao parou de filtrar
+  // (hardening do IDEAS.md - antes isso era invisivel fora da tela de Opcoes).
+  const wtNote = st.workingTimeError ? ' - ' + t('working_time_broken', lang) : '';
+  bar.textContent = `${st.total} ${t('active', lang)} ${instInfo}${wtNote} - ${ago(st.ts)}`;
   setCounts(st.bySev || {});
   allProblems = st.problems || [];
   fr.style.display = allProblems.length ? '' : 'none'; // so mostra o filtro quando ha o que filtrar
