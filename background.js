@@ -523,8 +523,9 @@ async function _pollZabbixOnce() {
     }
   }
 
-  // RESOLVIDOS (fora do Working time tambem ficam em silencio)
-  if (config.notifyResolved && config.notificationsEnabled && !offHours && allResolved.length) {
+  // RESOLVIDOS: segue as mesmas regras de silencio dos alertas (mute, off hours, modo reuniao),
+  // em vez de checar so o off hours - senao um resolvido ainda notifica mutado ou em call.
+  if (!config.muted && config.notifyResolved && config.notificationsEnabled && !suppressNotif && allResolved.length) {
     allResolved.slice(0, MAX_NOTIFS_PER_POLL).forEach(p => notifyResolved(p, baseFor(p.instId)));
   }
 }

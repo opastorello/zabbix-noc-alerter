@@ -332,6 +332,24 @@ function P(ev, sev, x = {}) { return { eventid: String(ev), objectid: 't' + ev, 
   scenario.byBase['https://z1'] = [];
   await poll();
   assert(captured.notifs.some(n => /resolv|recuper|resolved/i.test(n.title + ' ' + n.message)), 'problema que some gera notificacao de resolvido');
+
+  console.log('\n--- Integracao: resolvido respeita mute e modo reuniao (hardening) ---');
+  scenario.byBase = { 'https://z1': [P(301, 5)], 'https://z2': [] };
+  await setConfig({ instances: BG.getConfig().instances, minSeverity: 0, notifyResolved: true, notificationsEnabled: true, repeatAlarm: false, muted: true });
+  await poll();
+  scenario.byBase['https://z1'] = [];
+  await poll();
+  assert(!captured.notifs.some(n => /resolv|recuper|resolved/i.test(n.title + ' ' + n.message)), 'mutado: problema resolvido NAO notifica');
+
+  scenario.byBase = { 'https://z1': [P(302, 5)], 'https://z2': [] };
+  await setConfig({ instances: BG.getConfig().instances, minSeverity: 0, notifyResolved: true, notificationsEnabled: true, repeatAlarm: false, muted: false, suppressDuringMeeting: true, meetSuppressNotif: true, meetSuppressSound: false });
+  scenario.meetTabs = ['https://meet.google.com/aaa-bbbb-ccc'];
+  await poll();
+  scenario.byBase['https://z1'] = [];
+  await poll();
+  assert(!captured.notifs.some(n => /resolv|recuper|resolved/i.test(n.title + ' ' + n.message)), 'em reuniao (meetSuppressNotif): problema resolvido NAO notifica');
+  scenario.meetTabs = [];
+
   scenario.byBase = { 'https://z1': [P(400, 5)], 'https://z2': [P(500, 5)] };
   await setConfig({ instances: [
     { id: 'inst1', label: 'PRD', url: 'https://z1', token: 't1', enabled: true },
