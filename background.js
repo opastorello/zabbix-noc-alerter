@@ -492,13 +492,20 @@ async function _pollZabbixOnce() {
     workingTimeError,
     problems: sortedActive
       .slice(0, MAX_PROBLEMS_STORE)
-      .map(p => ({
-        eventid: p.eventid, objectid: p.objectid, hostid: p.hostid || '', name: p.name, host: p.host || '',
-        severity: Number(p.severity), clock: Number(p.clock), acknowledged: p.acknowledged === '1',
-        suppressed: p.suppressed === '1', maintenance: inMaintenance(p),
-        snoozedUntil: Number(state.snoozes[snzKey(p)] || 0), ackmsg: p.ackmsg || '',
-        instId: p._instId, instLabel: p._instLabel
-      }))
+      .map(p => {
+        // "nao visto" por problema (issue #28): mesma logica do badgeUnseen (firstSeenTs, quando a
+        // EXTENSAO descobriu, nao o clock do Zabbix), mas calculado sempre, independente da opcao
+        // do badge estar ligada - assim a lista pode marcar "NEW" sem precisar do badge tambem.
+        const entry = state.known.get(p._instId + ':' + p.eventid);
+        const unseen = (entry ? entry.firstSeenTs : 0) >= state.lastSeenTs;
+        return {
+          eventid: p.eventid, objectid: p.objectid, hostid: p.hostid || '', name: p.name, host: p.host || '',
+          severity: Number(p.severity), clock: Number(p.clock), acknowledged: p.acknowledged === '1',
+          suppressed: p.suppressed === '1', maintenance: inMaintenance(p),
+          snoozedUntil: Number(state.snoozes[snzKey(p)] || 0), ackmsg: p.ackmsg || '',
+          instId: p._instId, instLabel: p._instLabel, unseen
+        };
+      })
   });
 
   // badge: total de ativos (padrao) ou so os "nao vistos" desde a ultima abertura do popup.
@@ -698,8 +705,8 @@ async function _pollInstance(inst, _retried) {
   let hostsDegraded = false; // trigger.get falhou OU voltou incompleto: hosts ficam invisiveis neste poll
   if (tids.length) {
     try {
-      const trg = await apiCall(base, 'trigger.get', { triggerids: tids, output: ['triggerid', 'status'], selectHosts: ['hostid', 'name'] }, token, inst.id);
-      (trg || []).forEach(t => { const h = (t.hosts && t.hosts[0]) || {}; hostMap[t.triggerid] = { name: h.name || '', hostid: h.hostid || '', status: t.status }; });
+      const trg = await apiCall(base, 'trigger.get', { triggerids: tids, output: ['triggerid', 'status'], selectHosts: ['hostid', 'name', 'status'] }, token, inst.id);
+      (trg || []).forEach(t => { const h = (t.hosts && t.hosts[0]) || {}; hostMap[t.triggerid] = { name: h.name || '', hostid: h.hostid || '', status: t.status, hostStatus: h.status }; });
       // resposta 200 mas faltando algum trigger pedido (ex.: token sem permissao nesses hosts
       // especificos) tem o MESMO efeito visual de uma falha - linha sem host - entao conta como
       // degradado tambem, nao so quando a chamada lanca excecao.
@@ -715,11 +722,12 @@ async function _pollInstance(inst, _retried) {
     p.ackmsg = acks.length ? acks[acks.length - 1].message : '';
   });
 
-  // trigger desabilitado: o Zabbix nao fecha o problema sozinho ao desabilitar o trigger, entao ele
-  // fica orfao na lista para sempre (issue #25). So filtra quando o trigger.get respondeu (fail-open
-  // se falhou acima, ja que ai nao sabemos o status de nenhum).
+  // trigger desabilitado (issue #25) OU host desabilitado (issue #27): o Zabbix nao fecha o
+  // problema sozinho em nenhum dos dois casos, e o host desabilitado nem aparece mais na UI oficial
+  // do Zabbix. So filtra quando o trigger.get respondeu (fail-open se falhou acima, ja que ai nao
+  // sabemos o status de nenhum).
   if (tids.length && Object.keys(hostMap).length) {
-    active = active.filter(p => { const h = hostMap[p.objectid]; return !(h && h.status === '1'); });
+    active = active.filter(p => { const h = hostMap[p.objectid]; return !(h && (h.status === '1' || h.hostStatus === '1')); });
   }
 
   // filtro exclude
