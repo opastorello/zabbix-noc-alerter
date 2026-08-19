@@ -23,7 +23,7 @@ function resetCaptures() { captured = { sounds: [], notifs: [], cleared: [], bad
 // login: {user, pass, sid} habilita o user.login; requireSid: problem.get exige o sid atual
 // (simula sessao expirada trocando o sid); loginParam: 'username' (moderno) ou 'user' (Zabbix antigo);
 // cookie: valor do zbx_session do navegador (null = sem sessao aberta)
-let scenario = { byBase: {}, version: '6.0.4', groups: {}, lastProblemGet: {}, meetTabs: [], workPeriod: '', login: null, requireSid: false, loginParam: 'username', lastAuth: {}, cookie: null, disabledTriggers: [], problemGetError: null, problemGetCalls: {}, triggerGetError: null, hiddenTriggers: [] };
+let scenario = { byBase: {}, version: '6.0.4', groups: {}, lastProblemGet: {}, meetTabs: [], workPeriod: '', login: null, requireSid: false, loginParam: 'username', lastAuth: {}, cookie: null, disabledTriggers: [], disabledHosts: [], problemGetError: null, problemGetCalls: {}, triggerGetError: null, hiddenTriggers: [] };
 
 // ---------- mock chrome ----------
 const storageLocal = {}, storageSession = {};
@@ -90,7 +90,7 @@ async function fetchMock(url, opts) {
   else if (body.method === 'trigger.get') {
     if (scenario.triggerGetError) return errResp(scenario.triggerGetError, '');
     const ids = ((body.params && body.params.triggerids) || []).filter(id => !scenario.hiddenTriggers.includes(id));
-    result = ids.map(id => ({ triggerid: id, status: scenario.disabledTriggers.includes(id) ? '1' : '0', hosts: [{ hostid: 'h' + id, name: 'host-' + id }] }));
+    result = ids.map(id => ({ triggerid: id, status: scenario.disabledTriggers.includes(id) ? '1' : '0', hosts: [{ hostid: 'h' + id, name: 'host-' + id, status: scenario.disabledHosts.includes('h' + id) ? '1' : '0' }] }));
   }
   else if (body.method === 'event.acknowledge') result = { eventids: body.params.eventids };
   else if (body.method === 'settings.get') {
@@ -254,6 +254,16 @@ function P(ev, sev, x = {}) { return { eventid: String(ev), objectid: 't' + ev, 
   eq((stDisabled.problems || []).map(p => p.eventid).sort(), ['400'], 'problema com trigger desabilitado nao entra na lista');
   eq(stDisabled.total, 1, 'total tambem exclui o problema de trigger desabilitado');
   scenario.disabledTriggers = [];
+
+  console.log('\n--- Integracao: problema de host desabilitado nao aparece (issue #27) ---');
+  scenario.byBase = { 'https://z1': [P(420, 5), P(421, 4)], 'https://z2': [] };
+  scenario.disabledHosts = ['ht421']; // host do problema 421 foi desabilitado (t421 -> hostid ht421)
+  await setConfig({ instances: [{ id: 'inst1', label: 'PRD', url: 'https://z1', token: 't1', enabled: true }], minSeverity: 0, repeatAlarm: false });
+  await poll();
+  const stHostDisabled = status();
+  eq((stHostDisabled.problems || []).map(p => p.eventid).sort(), ['420'], 'problema de host desabilitado nao entra na lista');
+  eq(stHostDisabled.total, 1, 'total tambem exclui o problema de host desabilitado');
+  scenario.disabledHosts = [];
 
   console.log('\n--- Integracao: falha do trigger.get vira estado degradado, nao silenciosa (hardening) ---');
   scenario.byBase = { 'https://z1': [P(410, 5)], 'https://z2': [] };

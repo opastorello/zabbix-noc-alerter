@@ -698,8 +698,8 @@ async function _pollInstance(inst, _retried) {
   let hostsDegraded = false; // trigger.get falhou OU voltou incompleto: hosts ficam invisiveis neste poll
   if (tids.length) {
     try {
-      const trg = await apiCall(base, 'trigger.get', { triggerids: tids, output: ['triggerid', 'status'], selectHosts: ['hostid', 'name'] }, token, inst.id);
-      (trg || []).forEach(t => { const h = (t.hosts && t.hosts[0]) || {}; hostMap[t.triggerid] = { name: h.name || '', hostid: h.hostid || '', status: t.status }; });
+      const trg = await apiCall(base, 'trigger.get', { triggerids: tids, output: ['triggerid', 'status'], selectHosts: ['hostid', 'name', 'status'] }, token, inst.id);
+      (trg || []).forEach(t => { const h = (t.hosts && t.hosts[0]) || {}; hostMap[t.triggerid] = { name: h.name || '', hostid: h.hostid || '', status: t.status, hostStatus: h.status }; });
       // resposta 200 mas faltando algum trigger pedido (ex.: token sem permissao nesses hosts
       // especificos) tem o MESMO efeito visual de uma falha - linha sem host - entao conta como
       // degradado tambem, nao so quando a chamada lanca excecao.
@@ -715,11 +715,12 @@ async function _pollInstance(inst, _retried) {
     p.ackmsg = acks.length ? acks[acks.length - 1].message : '';
   });
 
-  // trigger desabilitado: o Zabbix nao fecha o problema sozinho ao desabilitar o trigger, entao ele
-  // fica orfao na lista para sempre (issue #25). So filtra quando o trigger.get respondeu (fail-open
-  // se falhou acima, ja que ai nao sabemos o status de nenhum).
+  // trigger desabilitado (issue #25) OU host desabilitado (issue #27): o Zabbix nao fecha o
+  // problema sozinho em nenhum dos dois casos, e o host desabilitado nem aparece mais na UI oficial
+  // do Zabbix. So filtra quando o trigger.get respondeu (fail-open se falhou acima, ja que ai nao
+  // sabemos o status de nenhum).
   if (tids.length && Object.keys(hostMap).length) {
-    active = active.filter(p => { const h = hostMap[p.objectid]; return !(h && h.status === '1'); });
+    active = active.filter(p => { const h = hostMap[p.objectid]; return !(h && (h.status === '1' || h.hostStatus === '1')); });
   }
 
   // filtro exclude
