@@ -133,6 +133,7 @@ function applyFilter() {
   list = list.slice().sort((a, b) =>
     sortBy === 'host' ? ((a.host || '').localeCompare(b.host || '') || Number(b.severity) - Number(a.severity))
     : sortBy === 'age' ? (Number(a.clock) - Number(b.clock))
+    : sortBy === 'newest' ? (Number(b.clock) - Number(a.clock))
     : (Number(b.severity) - Number(a.severity) || Number(b.clock) - Number(a.clock)));
   // corte de renderizacao aplicado DEPOIS do filtro/ordenacao, nunca antes: assim a contagem por
   // severidade (stats-row) e o resultado do filtro clicado sempre batem com o que a lista mostra.
@@ -195,7 +196,8 @@ function renderList(problems, filtered, groupBy) {
     const [lbl, cls] = SEV[p.severity] || ['?', 'info'];
     const snoozed = p.snoozedUntil && p.snoozedUntil > Date.now();
     const instBadge = (multiInst && p.instLabel) ? `<span class="inst-badge">${esc(p.instLabel)}</span>` : '';
-    const tags = (p.acknowledged ? '<span class="tag ackd">&#x2713; ACK</span>' : '')
+    const tags = (p.unseen ? `<span class="tag new" title="${t('tag_new', lang)}">${t('tag_new', lang)}</span>` : '')
+      + (p.acknowledged ? '<span class="tag ackd">&#x2713; ACK</span>' : '')
       + (p.maintenance ? `<span class="tag mnt" title="${t('tag_maint', lang)}">MNT</span>`
         : (p.suppressed ? '<span class="tag">SUP</span>' : ''));
     const snzBtn = snoozed

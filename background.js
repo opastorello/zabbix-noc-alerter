@@ -492,13 +492,20 @@ async function _pollZabbixOnce() {
     workingTimeError,
     problems: sortedActive
       .slice(0, MAX_PROBLEMS_STORE)
-      .map(p => ({
-        eventid: p.eventid, objectid: p.objectid, hostid: p.hostid || '', name: p.name, host: p.host || '',
-        severity: Number(p.severity), clock: Number(p.clock), acknowledged: p.acknowledged === '1',
-        suppressed: p.suppressed === '1', maintenance: inMaintenance(p),
-        snoozedUntil: Number(state.snoozes[snzKey(p)] || 0), ackmsg: p.ackmsg || '',
-        instId: p._instId, instLabel: p._instLabel
-      }))
+      .map(p => {
+        // "nao visto" por problema (issue #28): mesma logica do badgeUnseen (firstSeenTs, quando a
+        // EXTENSAO descobriu, nao o clock do Zabbix), mas calculado sempre, independente da opcao
+        // do badge estar ligada - assim a lista pode marcar "NEW" sem precisar do badge tambem.
+        const entry = state.known.get(p._instId + ':' + p.eventid);
+        const unseen = (entry ? entry.firstSeenTs : 0) >= state.lastSeenTs;
+        return {
+          eventid: p.eventid, objectid: p.objectid, hostid: p.hostid || '', name: p.name, host: p.host || '',
+          severity: Number(p.severity), clock: Number(p.clock), acknowledged: p.acknowledged === '1',
+          suppressed: p.suppressed === '1', maintenance: inMaintenance(p),
+          snoozedUntil: Number(state.snoozes[snzKey(p)] || 0), ackmsg: p.ackmsg || '',
+          instId: p._instId, instLabel: p._instLabel, unseen
+        };
+      })
   });
 
   // badge: total de ativos (padrao) ou so os "nao vistos" desde a ultima abertura do popup.

@@ -615,6 +615,21 @@ function P(ev, sev, x = {}) { return { eventid: String(ev), objectid: 't' + ev, 
   await poll();
   eq(captured.badge, '1', 'problema nunca visto pelo usuario conta no badge, mesmo com clock antigo do Zabbix');
 
+  console.log('\n--- Integracao: cada problema carrega "unseen", independente do badgeUnseen (issue #28) ---');
+  // instId/url diferentes dos testes anteriores: forca filterSignature() a mudar de verdade, garantindo
+  // um baseline real (senao state.initialized carrega do teste anterior e 970 nasceria "fresh").
+  scenario.byBase = { 'https://zUnseen': [P(970, 5)], 'https://z2': [] };
+  await setConfig({ instances: [{ id: 'instUnseen', label: 'PRD', url: 'https://zUnseen', token: 't1', enabled: true }], minSeverity: 0, badgeUnseen: false, repeatAlarm: false });
+  await poll(); // baseline: 970 e "conhecido"
+  await send({ action: 'getStatus' }); // popup abre -> lastSeenTs vira "agora", 970 ja foi visto
+  scenario.byBase['https://zUnseen'].push(P(971, 5, { name: 'chegou depois do popup abrir' }));
+  await poll();
+  const stUnseen = status();
+  const p970 = (stUnseen.problems || []).find(p => p.eventid === '970');
+  const p971 = (stUnseen.problems || []).find(p => p.eventid === '971');
+  eq(p970.unseen, false, '970 (conhecido antes do popup abrir) nao fica marcado unseen');
+  eq(p971.unseen, true, '971 (chegou depois do popup abrir) fica marcado unseen, mesmo com badgeUnseen desligado');
+
   // =================================================================
   console.log('\n' + '='.repeat(44));
   console.log('RESULTADO: ' + pass + ' passaram, ' + fail + ' falharam');
