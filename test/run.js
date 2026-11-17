@@ -123,7 +123,7 @@ const poll = async () => { resetCaptures(); await send({ action: 'pollNow' }); }
 const status = () => BG.getState().status;
 const knownKeys = () => [...BG.getState().known.keys()].sort();
 const probByEvent = (instId, ev) => (status().problems || []).find(p => p.instId === instId && p.eventid === ev);
-function P(ev, sev, x = {}) { return { eventid: String(ev), objectid: 't' + ev, name: x.name || ('p' + ev), severity: String(sev), clock: String(x.clock || 1700000000), acknowledged: x.acknowledged || '0', suppressed: x.suppressed || '0', suppression_data: x.suppression_data || [], acknowledges: x.acknowledges || [] }; }
+function P(ev, sev, x = {}) { return { eventid: String(ev), objectid: 't' + ev, name: x.name || ('p' + ev), severity: String(sev), clock: String(x.clock || 1700000000), acknowledged: x.acknowledged || '0', suppressed: x.suppressed || '0', suppression_data: x.suppression_data || [], acknowledges: x.acknowledges || [], opdata: x.opdata || '', tags: x.tags || [] }; }
 
 (async () => {
   // =================================================================
@@ -435,6 +435,18 @@ function P(ev, sev, x = {}) { return { eventid: String(ev), objectid: 't' + ev, 
   scenario.byBase['https://zHid'] = [];
   await poll();
   assert(captured.notifs.some(isResolvedNotif), 'problema que sai do problem.get (resolvido de verdade) continua gerando o toast');
+
+  console.log('\n--- Integracao: opdata do problema chega no popup ---');
+  scenario.byBase = { 'https://zOp': [P(330, 4, { opdata: 'CPU 97%' }), P(331, 3)], 'https://z2': [] };
+  await setConfig({ instances: [{ id: 'instOp', label: 'PRD', url: 'https://zOp', token: 't1', enabled: true }], minSeverity: 0, repeatAlarm: false });
+  await poll();
+  assert((scenario.lastProblemGet['https://zOp'].output || []).includes('opdata'), 'problem.get pede o campo opdata');
+  eq(probByEvent('instOp', '330').opdata, 'CPU 97%', 'opdata vai junto no status do problema');
+  eq(probByEvent('instOp', '331').opdata, '', 'sem opdata = string vazia (popup nao mostra nada)');
+  scenario.byBase['https://zOp'].push(P(332, 5, { name: 'Disk full', opdata: 'free 2%' }), P(333, 5, { name: 'Sem valor' }));
+  await poll();
+  assert(captured.notifs.some(n => n.message === 'Disk full - free 2%'), 'notificacao de problema novo mostra o opdata junto do nome');
+  assert(captured.notifs.some(n => n.message === 'Sem valor'), 'sem opdata a notificacao fica so com o nome');
 
   console.log('\n--- Integracao: mudo com tempo desliga sozinho e avisa ---');
   scenario.byBase = { 'https://zMute': [P(320, 5)], 'https://z2': [] };

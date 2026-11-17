@@ -87,6 +87,7 @@ header h1 { font-size:13px; font-weight:700; color:var(--accent); white-space:no
 .host { font-size:10px; font-weight:600; color:#cfd6e0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .inst-badge { font-size:8px; font-weight:700; background:#1a2440; color:#7499ff; border:1px solid #25406e; padding:0 4px; border-radius:3px; margin-right:4px; vertical-align:middle; }
 .name { font-size:11px; color:var(--text-dim); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.opdata { font-size:10px; font-family:Consolas,'SF Mono',monospace; color:#d6dbe3; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; margin-top:1px; } /* valor do trigger (opdata): o NOC tria por ele */
 .ackinfo { font-size:9px; color:#6fae84; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; margin-top:1px; }
 .meta { display:flex; align-items:center; gap:4px; flex-shrink:0; }
 .tag { font-size:8px; font-weight:700; background:#2e2812; color:#e0b341; border:1px solid #4a3f1a; padding:1px 5px; border-radius:3px; }

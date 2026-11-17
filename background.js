@@ -585,6 +585,7 @@ async function _pollZabbixOnce() {
           severity: Number(p.severity), clock: Number(p.clock), acknowledged: p.acknowledged === '1',
           suppressed: p.suppressed === '1', maintenance: inMaintenance(p),
           snoozedUntil: Number(state.snoozes[snzKey(p)] || 0), ackmsg: p.ackmsg || '',
+          opdata: String(p.opdata || '').trim(),
           instId: p._instId, instLabel: p._instLabel, unseen
         };
       })
@@ -739,7 +740,9 @@ async function _pollInstance(inst, _retried) {
   let problems;
   try {
     const pget = {
-      output: ['eventid', 'objectid', 'name', 'severity', 'clock', 'acknowledged', 'suppressed'],
+      // opdata = "dados operacionais" do trigger com macros expandidas ("CPU 97%"): o NOC tria pelo
+      // valor, nao pelo nome do trigger. Vazio quando o trigger nao define.
+      output: ['eventid', 'objectid', 'name', 'severity', 'clock', 'acknowledged', 'suppressed', 'opdata'],
       selectAcknowledges: ['clock', 'message'],
       selectSuppressionData: ['maintenanceid'], // distingue manutencao de supressao manual
       recent: false,
@@ -926,7 +929,7 @@ function notify(p, base, fixedId, extraCount) {
     type: 'basic',
     iconUrl: 'icons/icon128.png',
     title: '[' + t('nsev' + sev, lang).toUpperCase() + '] ' + (p.host || 'Zabbix'),
-    message: p.name || '(...)',
+    message: (p.name || '(...)') + (String(p.opdata || '').trim() ? ' - ' + String(p.opdata).trim() : ''),
     contextMessage: ctx,
     priority: 2,
     requireInteraction: sev >= 4

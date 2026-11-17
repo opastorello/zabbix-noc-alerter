@@ -257,6 +257,7 @@ function renderList(problems, filtered, groupBy) {
       <div class="txt">
         ${p.host ? `<div class="host">${instBadge}${esc(p.host)}</div>` : (instBadge ? `<div class="host">${instBadge}</div>` : '')}
         <div class="name" title="${esc(p.name)}">${esc(p.name)}</div>
+        ${p.opdata ? `<div class="opdata" title="${esc(p.opdata)}">${esc(p.opdata)}</div>` : ''}
         ${p.acknowledged && p.ackmsg ? `<div class="ackinfo" title="${esc(p.ackmsg)}">&#x2713; ${esc(p.ackmsg)}</div>` : ''}
       </div>
       <div class="meta">${tags}${snzBtn}${ackBtn}<span class="age">${ago(p.clock * 1000)}</span></div>

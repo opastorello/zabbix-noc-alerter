@@ -13,6 +13,9 @@ in `manifest.json`.
   A timed mute turns itself off and says so with a notification, and the
   popup shows a banner with how long is left, so a forgotten mute can no
   longer silence the NOC for a whole weekend.
+- The trigger's operational data ("CPU 97%", "free 4%") is shown on each row
+  of the popup and in the notification text, so you can triage on the value
+  instead of only the trigger name.
 - "Newest" sort option in the popup, next to "Age" (oldest first) (GitHub #28).
 - Problems that appeared since the popup was last opened get a "NEW" tag in the
   list, independent of the "unseen" badge option (GitHub #28).
