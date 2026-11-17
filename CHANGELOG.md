@@ -37,6 +37,13 @@ in `manifest.json`.
   filter the list by it; the text filter also matches tags), and each instance
   accepts a tag filter pushed to the server like the host groups:
   `service:web` (contains), `env=prod` (equals), `team` (tag exists).
+- New "Display" section in Options. Tags get the same three settings as the
+  Problems page in Zabbix: how many to show per problem (none to 3), the tag
+  name (full, shortened to 3 letters, or value only) and a display priority
+  (for example `service, team` first, so template tags like
+  `class`/`component`/`scope` stop taking up the row). Clicking a chip still
+  filters by the full `tag:value`, and the text filter still matches every
+  tag, shown or not. The defaults keep the popup looking exactly as before.
 - "Newest" sort option in the popup, next to "Age" (oldest first) (GitHub #28).
 - Problems that appeared since the popup was last opened get a "NEW" tag in the
   list, independent of the "unseen" badge option (GitHub #28).

@@ -130,6 +130,29 @@ vm.runInContext(bgSrc + bridge, sandbox, { filename: 'background.js' });
 const BG = sandbox.__bg;
 BG.setPlaySpy((preset, vol) => { captured.sounds.push({ preset, vol }); return Promise.resolve(); });
 
+// ---------- popup.js real (as funcoes; o DOM e um duble minimo) ----------
+// Monta a linha (renderList) sem navegador: getElementById devolve um elemento falso que guarda o
+// innerHTML e o teste le o HTML montado. Nao valida layout/CSS - isso continua sendo ao vivo.
+const popupSrc = fs.readFileSync(path.join(ROOT, 'popup.js'), 'utf8');
+const popEls = {};
+function fakeEl() { return { innerHTML: '', textContent: '', value: '', style: {}, dataset: {}, className: '', classList: { add() {}, remove() {}, toggle() {}, contains: () => false }, addEventListener() {}, querySelectorAll: () => [], querySelector: () => null, setAttribute() {}, getAttribute: () => null }; }
+const popEl = (id) => popEls[id] || (popEls[id] = fakeEl());
+const popSandbox = {
+  console, setTimeout, clearTimeout, setInterval: () => 0, navigator: { language: 'pt-BR' },
+  document: { addEventListener() {}, getElementById: popEl, querySelector: popEl, querySelectorAll: () => [], documentElement: {},
+    // esc() usa div.textContent -> innerHTML; o navegador serializa texto escapando so & < > (e nbsp)
+    createElement: () => { let txt = ''; return { set textContent(v) { txt = String(v); }, get innerHTML() { return txt.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/ /g, '&nbsp;'); } }; } },
+  chrome: { runtime: { sendMessage() {}, getManifest: () => ({ version: '0.0.0' }), openOptionsPage() {} }, storage: { local: { get() {}, set() {} } } },
+};
+vm.createContext(popSandbox);
+vm.runInContext(i18nSrc, popSandbox, { filename: 'i18n.js' });
+vm.runInContext(popupSrc + '\n;globalThis.__pop = { setDisp: (c) => { disp = displayOpts(c); } };', popSandbox, { filename: 'popup.js' });
+// HTML da linha de UM problema com estas opcoes de exibicao (config parcial; o resto no padrao)
+function popRow(p, c) {
+  try { popSandbox.__pop.setDisp(c || {}); popSandbox.renderList([p], false, 'none'); return popEl('list').innerHTML; }
+  catch (e) { return 'ERRO: ' + e.message; }
+}
+
 // ---------- helpers de integracao ----------
 function send(msg) { return new Promise(res => { const r = messageListener(msg, {}, res); if (r !== true) res(undefined); }); }
 const setConfig = (cfg) => send({ action: 'setConfig', config: cfg });
@@ -1158,6 +1181,38 @@ function P(ev, sev, x = {}) { return { eventid: String(ev), objectid: 't' + ev, 
   eq(captured.notifs.filter(n => /^zbx-461-/.test(n.id)).length, 0, 'e entra calado como baseline novo, nao como alerta de problema novo (sem enxurrada)');
   eq(captured.notifs.filter(n => n.id !== 'zbx-nag').length, 0, 'nenhuma notificacao alem do lembrete do re-alarme');
   scenario.cookie = null;
+
+  console.log('\n--- Exibicao: tags estilo Zabbix (popup.js real, linha montada) ---');
+  const DEF = BG.getDefaults();
+  eq([DEF.showTags, DEF.tagNameFormat, DEF.tagPriority], [3, 'full', ''], 'padroes das tags = visual de antes (3 chips, nome completo, sem prioridade)');
+  // tags tipicas de template do Zabbix 6+: class/component/scope sao ruido, service/team e o que o NOC le
+  const tagsP = { eventid: '1', instId: 'i1', host: 'web-01', name: 'CPU alta', severity: '4', clock: String(Math.floor(Date.now() / 1000)),
+    tags: [{ tag: 'class', value: 'os' }, { tag: 'component', value: 'cpu' }, { tag: 'scope', value: 'performance' }, { tag: 'service', value: 'web' }, { tag: 'team', value: '' }] };
+  const chips = (html) => [...html.matchAll(/class="tagchip"[^>]*>([^<]*)</g)].map(m => m[1]);
+  const tagMore = (html) => (html.match(/class="tagmore"[^>]*>\+(\d+)</) || [])[1] || null;
+  let rowH = popRow(tagsP, {});
+  eq(chips(rowH), ['class:os', 'component:cpu', 'scope:performance'], 'sem config: os 3 primeiros chips com o nome completo (igual a antes)');
+  eq(tagMore(rowH), '2', 'e o "+2" das que sobraram');
+  rowH = popRow(tagsP, { showTags: 1 });
+  eq(chips(rowH), ['class:os'], 'mostrar 1 tag');
+  eq(tagMore(rowH), '4', '...com o +4 do resto');
+  rowH = popRow(tagsP, { showTags: 0 });
+  assert(/CPU alta/.test(rowH) && !/tagrow/.test(rowH), 'mostrar nenhuma tag: a linha aparece, sem a fila de tags');
+  eq(chips(popRow(tagsP, { tagPriority: 'service, Team' })), ['service:web', 'team', 'class:os'], 'prioridade: service e team primeiro, na ordem da lista e sem diferenciar maiusculas; o resto na ordem do Zabbix');
+  eq(chips(popRow(tagsP, { tagNameFormat: 'short' })), ['cla:os', 'com:cpu', 'sco:performance'], 'nome abreviado: 3 letras do nome, como no Zabbix');
+  eq(chips(popRow(tagsP, { tagNameFormat: 'none', tagPriority: 'team,service' })), ['team', 'web', 'os'], 'so o valor; tag sem valor mostra o nome (senao seria um chip vazio)');
+  assert(/data-tag="service:web"/.test(popRow(tagsP, { tagNameFormat: 'none', tagPriority: 'service' })), 'mostrando so o valor, o clique no chip continua filtrando por "tag:valor" completo');
+  eq(chips(popRow(tagsP, { showTags: '7', tagNameFormat: 'xx' })).length, 3, 'valor invalido no config cai no padrao (3 chips)');
+  eq(chips(popRow(tagsP, { showTags: '2' })).length, 2, 'numero vindo como texto do <select> funciona');
+
+  // trocar so a exibicao nao pode re-basear (salvar as Opcoes viraria uma enxurrada de "novos")
+  scenario.byBase = { 'https://zDisp': [P(470, 5, { name: 'ja existia' })] };
+  await setConfig({ instances: [{ id: 'instD', label: 'D', url: 'https://zDisp', token: 'tD', enabled: true }], minSeverity: 0, repeatAlarm: false, muted: false, mutedUntil: 0, notificationsEnabled: true, soundEnabled: true, blindSpotAlert: false });
+  await poll();
+  await setConfig({ showTags: 1, tagNameFormat: 'short', tagPriority: 'service' });
+  assert(BG.getState().initialized === true, 'salvar so opcoes de exibicao das tags nao re-baseia');
+  await poll();
+  eq(captured.notifs.length + captured.sounds.length, 0, 'e o que ja existia nao alerta de novo');
 
   // =================================================================
   console.log('\n' + '='.repeat(44));

@@ -54,6 +54,7 @@ document.addEventListener('DOMContentLoaded', () => {
 function load() {
   chrome.runtime.sendMessage({ action: 'getConfig' }, (r) => {
     cfg = r?.config || {};
+    disp = displayOpts(cfg);
     lang = resolveLang(cfg.lang);
     applyI18n(lang);
     renderMute();
@@ -202,10 +203,44 @@ function applyFilter() {
   renderList(list, !!term || sevFilter !== null, document.getElementById('groupBy').value);
 }
 
-// tags como texto "tag:valor" (o mesmo formato do chip e do filtro)
+// tags como texto "tag:valor" (o formato do filtro; o chip pode mostrar menos, ver tagChipText)
 function tagLabel(tg) { return tg.value ? tg.tag + ':' + tg.value : tg.tag; }
 function tagText(p) { return (p.tags || []).map(tagLabel).join(' '); }
-const MAX_TAG_CHIPS = 3;
+
+// Opcoes de exibicao do config, normalizadas: ausente ou invalido = o visual de antes.
+function displayOpts(c) {
+  c = c || {};
+  const n = (c.showTags == null || c.showTags === '') ? 3 : Number(c.showTags);
+  return {
+    showTags: [0, 1, 2, 3].includes(n) ? n : 3,
+    tagNameFormat: ['full', 'short', 'none'].includes(c.tagNameFormat) ? c.tagNameFormat : 'full',
+    tagPriority: String(c.tagPriority || '').split(/[,\n]/).map(s => s.trim().toLowerCase()).filter(Boolean),
+  };
+}
+let disp = displayOpts({});
+
+// tags na ordem de exibicao: as da prioridade primeiro (na ordem da lista), o resto na ordem do Zabbix
+function orderTags(tags, priority) {
+  if (!priority.length) return tags.slice();
+  const rank = (tg) => { const i = priority.indexOf(String(tg.tag || '').toLowerCase()); return i < 0 ? priority.length : i; };
+  return tags.map((tg, i) => ({ tg, i })).sort((a, b) => rank(a.tg) - rank(b.tg) || a.i - b.i).map(x => x.tg);
+}
+// texto do chip conforme "Nome da tag" (igual ao Zabbix): completo, abreviado (3 letras) ou so o valor.
+// Tag sem valor mostra sempre o nome: e tudo o que ela tem.
+function tagChipText(tg, fmt) {
+  if (!tg.value) return tg.tag;
+  if (fmt === 'none') return tg.value;
+  if (fmt === 'short') return Array.from(String(tg.tag)).slice(0, 3).join('') + ':' + tg.value;
+  return tg.tag + ':' + tg.value;
+}
+function tagRowHtml(p) {
+  const tags = p.tags || [];
+  if (!tags.length || !disp.showTags) return '';
+  const ordered = orderTags(tags, disp.tagPriority);
+  const shown = ordered.slice(0, disp.showTags), rest = ordered.slice(disp.showTags);
+  // data-tag sempre "tag:valor" completo: o clique filtra igual, mostre o chip o que mostrar
+  return `<div class="tagrow">${shown.map(tg => `<button class="tagchip" data-tag="${esc(tagLabel(tg))}" title="${esc(tagLabel(tg) + ' - ' + t('tag_filter', lang))}">${esc(tagChipText(tg, disp.tagNameFormat))}</button>`).join('')}${rest.length ? `<span class="tagmore" title="${esc(rest.map(tagLabel).join(', '))}">+${rest.length}</span>` : ''}</div>`;
+}
 
 function buildInstInfo(instStatus) {
   if (!instStatus) return '';
@@ -272,7 +307,7 @@ function renderList(problems, filtered, groupBy) {
         ${p.host ? `<div class="host">${instBadge}${esc(p.host)}</div>` : (instBadge ? `<div class="host">${instBadge}</div>` : '')}
         <div class="name" title="${esc(p.name)}">${esc(p.name)}</div>
         ${p.opdata ? `<div class="opdata" title="${esc(p.opdata)}">${esc(p.opdata)}</div>` : ''}
-        ${(p.tags || []).length ? `<div class="tagrow">${p.tags.slice(0, MAX_TAG_CHIPS).map(tg => `<button class="tagchip" data-tag="${esc(tagLabel(tg))}" title="${esc(t('tag_filter', lang))}">${esc(tagLabel(tg))}</button>`).join('')}${p.tags.length > MAX_TAG_CHIPS ? `<span class="tagmore" title="${esc(p.tags.slice(MAX_TAG_CHIPS).map(tagLabel).join(', '))}">+${p.tags.length - MAX_TAG_CHIPS}</span>` : ''}</div>` : ''}
+        ${tagRowHtml(p)}
         ${p.acknowledged && p.ackmsg ? `<div class="ackinfo" title="${esc(p.ackmsg)}">&#x2713; ${esc(p.ackmsg)}</div>` : ''}
       </div>
       <div class="meta">${tags}${snzBtn}${ackBtn}<span class="age">${ago(p.clock * 1000)}</span></div>

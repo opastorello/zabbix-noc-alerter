@@ -10,7 +10,8 @@ const SOUNDS = [
 ];
 const MAX_INSTANCES = 8;
 const NUM = ['pollInterval', 'repeatInterval'];
-const SEL = ['minSeverity', 'soundSev5', 'soundSev4', 'soundSev3', 'soundSev2', 'soundSev1'];
+const SEL = ['minSeverity', 'soundSev5', 'soundSev4', 'soundSev3', 'soundSev2', 'soundSev1', 'showTags', 'tagNameFormat'];
+const SEL_NUM = ['minSeverity', 'showTags']; // selects cujo valor e numero no config
 const CHK = ['soundEnabled', 'notificationsEnabled', 'notifyResolved', 'badgeUnseen', 'repeatAlarm', 'nagNotify', 'suppressDuringMeeting', 'meetSuppressNotif', 'meetSuppressSound', 'workingTimeOnly', 'blindSpotAlert', 'ignoreAckd', 'ignoreSuppressed', 'ignoreMaintenance'];
 
 let currentLang = 'pt';
@@ -328,6 +329,7 @@ function loadSettings() {
     document.getElementById('maxAgeDays').value = c.maxAgeDays ?? 0;
     document.getElementById('blindSpotMinutes').value = c.blindSpotMinutes ?? 2;
     document.getElementById('excludePatterns').value = c.excludePatterns || '';
+    document.getElementById('tagPriority').value = c.tagPriority || '';
     updateVolLabel();
     checkWorkPeriod(); // depois de aplicar o config: valida/desativa o checkbox de working time
   });
@@ -344,13 +346,14 @@ function saveSettings() {
   });
   SEL.forEach(id => {
     const v = document.getElementById(id).value;
-    cfg[id] = id === 'minSeverity' ? Number(v) : v;
+    cfg[id] = SEL_NUM.includes(id) ? Number(v) : v;
   });
   CHK.forEach(id => { cfg[id] = document.getElementById(id).checked; });
   cfg.volume = parseFloat(document.getElementById('volume').value);
   cfg.maxAgeDays = Math.max(0, parseInt(document.getElementById('maxAgeDays').value, 10) || 0);
   cfg.blindSpotMinutes = Math.min(60, Math.max(1, parseInt(document.getElementById('blindSpotMinutes').value, 10) || 2));
   cfg.excludePatterns = document.getElementById('excludePatterns').value.trim();
+  cfg.tagPriority = document.getElementById('tagPriority').value.trim();
   cfg.lang = document.getElementById('lang').value;
 
   chrome.runtime.sendMessage({ action: 'setConfig', config: cfg }, () => {
@@ -367,7 +370,9 @@ function resetSettings() {
     soundSev5: 'klaxon', soundSev4: 'siren', soundSev3: 'pulse', soundSev2: 'beepbeep', soundSev1: 'chime',
     ignoreAckd: false, ignoreSuppressed: true, ignoreMaintenance: true, badgeUnseen: false, muted: false, mutedUntil: 0, mutedAt: 0,
     suppressDuringMeeting: true, meetSuppressNotif: true, meetSuppressSound: true, workingTimeOnly: false,
-    blindSpotAlert: true, blindSpotMinutes: 2, lang: currentLang
+    blindSpotAlert: true, blindSpotMinutes: 2,
+    showTags: 3, tagNameFormat: 'full', tagPriority: '',
+    lang: currentLang
   };
   chrome.runtime.sendMessage({ action: 'setConfig', config: defaults }, () => {
     loadSettings();

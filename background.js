@@ -41,6 +41,11 @@ const DEFAULT_CONFIG = {
   workingTimeOnly: false, // alertar so dentro do Working time configurado no Zabbix server
   blindSpotAlert: true,   // avisar quando a extensao parar de enxergar uma instancia (ponto cego)
   blindSpotMinutes: 2,    // ...depois de quantos minutos seguidos sem conseguir ler os problemas
+  // Exibicao (so o que aparece; nao mexe em filtro nem alerta). Padroes = o visual de antes.
+  // As 3 de tags sao as mesmas da tela de Problemas do proprio Zabbix.
+  showTags: 3,            // quantas tags por problema: 0..3
+  tagNameFormat: 'full',  // 'full' (service:web) | 'short' (ser:web) | 'none' (web)
+  tagPriority: '',        // nomes de tag que aparecem primeiro, nesta ordem (virgula)
   lang: ''                // '' = auto (idioma do navegador); 'pt' | 'en' | 'es'
 };
 

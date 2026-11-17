@@ -192,6 +192,37 @@
   </div>
 
   <div class="section">
+    <h2 data-i18n="display">Exibição</h2>
+    <div class="section-body">
+      <div class="desc" data-i18n="display_desc">Só muda o que aparece. Filtros e alertas continuam iguais.</div>
+      <div class="row">
+        <div class="field">
+          <label for="showTags" data-i18n="show_tags">Tags por problema</label>
+          <select id="showTags">
+            <option value="0" data-i18n="show_tags_0">Nenhuma</option>
+            <option value="1">1</option>
+            <option value="2">2</option>
+            <option value="3">3</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="tagNameFormat" data-i18n="tag_name_fmt">Nome da tag</label>
+          <select id="tagNameFormat">
+            <option value="full" data-i18n="tag_fmt_full">Completo</option>
+            <option value="short" data-i18n="tag_fmt_short">Abreviado (3 letras)</option>
+            <option value="none" data-i18n="tag_fmt_none">Só o valor</option>
+          </select>
+        </div>
+      </div>
+      <div class="field">
+        <label for="tagPriority" data-i18n="tag_prio">Prioridade das tags</label>
+        <input type="text" id="tagPriority" data-i18n-ph="tag_prio_ph" placeholder="service, team">
+        <div class="desc" data-i18n="tag_prio_desc">Tags com estes nomes aparecem primeiro, nesta ordem (vírgula). Vazio = ordem do Zabbix.</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="section">
     <h2 data-i18n="backup">Backup</h2>
     <div class="section-body">
       <div class="desc" data-i18n="backup_desc">Exporte/importe as configurações em JSON (o token de API não é exportado).</div>
