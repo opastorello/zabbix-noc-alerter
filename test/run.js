@@ -984,6 +984,12 @@ function P(ev, sev, x = {}) { return { eventid: String(ev), objectid: 't' + ev, 
   resetCaptures(); await poll();
   assert(!captured.cleared.includes('zbx-blind-instFx2'), 'e nao fica chamando clear a cada poll depois disso');
 
+  console.log('\n--- Bug hunt v0.6: "mudo ate o fim do turno" com o turno ja acabado ---');
+  const mPast = await send({ action: 'setMuted', muted: true, untilTs: Date.now() - 60000 });
+  assert(!(mPast.muted && !mPast.mutedUntil), 'setMuted com untilTs que ja passou nao vira mudo INDEFINIDO (o oposto do que foi pedido)');
+  eq([mPast.muted, BG.getConfig().muted], [false, false], 'turno ja acabado: nao muta (nao ha o que silenciar)');
+  await send({ action: 'setMuted', muted: false });
+
   // =================================================================
   console.log('\n' + '='.repeat(44));
   console.log('RESULTADO: ' + pass + ' passaram, ' + fail + ' falharam');

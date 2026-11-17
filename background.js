@@ -1294,8 +1294,11 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
   if (msg.action === 'setMuted') {
     // minutes > 0 = mudo com tempo; untilTs = ate um horario (fim do turno); nenhum = ate reativar
-    config.muted = !!msg.muted;
     const mins = Number(msg.minutes) || 0, until = Number(msg.untilTs) || 0;
+    // "ate as HH:MM" com o horario ja passado (menu do popup aberto ate o turno acabar): nao ha o que
+    // silenciar. Antes caia em mutedUntil 0 = mudo INDEFINIDO, o oposto do que foi pedido.
+    const expiredUntil = msg.untilTs != null && !(mins > 0) && until <= Date.now();
+    config.muted = !!msg.muted && !expiredUntil;
     config.mutedUntil = !config.muted ? 0 : (mins > 0 ? Date.now() + mins * 60000 : (until > Date.now() ? until : 0));
     saveConfig();
     sendResponse({ ok: true, muted: config.muted, mutedUntil: config.mutedUntil });
