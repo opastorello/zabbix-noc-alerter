@@ -70,6 +70,14 @@ async function fetchMock(url, opts) {
   const auth = String(hdrs['Authorization'] || '').replace('Bearer ', '') || body.auth || null;
   const errResp = (message, data) => ({ status: 200, json: async () => ({ jsonrpc: '2.0', error: { message, data }, id: 1 }) });
   let result;
+  // Zabbix 7.2+/8.0: o parametro 'auth' no corpo nao existe mais (erro de schema, antes da credencial)
+  if (scenario.rejectBodyAuth && body.auth !== undefined) {
+    scenario.bodyAuthCalls = (scenario.bodyAuthCalls || 0) + 1;
+    return { status: 200, json: async () => ({ jsonrpc: '2.0', error: { code: -32600, message: 'Invalid request.', data: 'Invalid parameter "/": unexpected parameter "auth".' }, id: 1 }) };
+  }
+  // Zabbix 6.x: nao conhece o header Bearer (so o 'auth' no corpo)
+  if (scenario.rejectHeaderAuth && hdrs['Authorization'] && body.method !== 'apiinfo.version' && body.method !== 'user.login') return errResp('Invalid params.', 'Not authorized.');
+  if (scenario.badToken && auth === scenario.badToken && body.method !== 'apiinfo.version' && body.method !== 'user.login') return errResp('Invalid params.', 'Session terminated, re-login, please.');
   if (body.method === 'apiinfo.version') result = scenario.version;
   else if (body.method === 'user.login') {
     if (auth) return errResp('Invalid params.', 'user.login nao aceita autorizacao'); // metodo publico
@@ -515,6 +523,37 @@ function P(ev, sev, x = {}) { return { eventid: String(ev), objectid: 't' + ev, 
   resetCaptures();
   await setConfig({ instances: [{ id: 'instTag', label: 'PRD', url: 'https://zTag', token: 't1', enabled: true, tags: 'team' }] }); // o poll do proprio setConfig e o que alertaria
   assert(!captured.sounds.length && !captured.notifs.length, 'trocar o filtro de tags re-baseia: problema que so ficou visivel nao alerta');
+
+  console.log('\n--- Zabbix 7.2+/8.0: sem "auth" no corpo, erro de credencial limpo ---');
+  scenario.rejectBodyAuth = true; scenario.badToken = 'tok-ruim'; scenario.bodyAuthCalls = 0;
+  scenario.byBase = { 'https://z80': [P(370, 4)], 'https://z2': [] };
+  await setConfig({ instances: [{ id: 'inst80', label: 'Z80', url: 'https://z80', authType: 'token', token: 'tok-ruim', enabled: true }], minSeverity: 0, repeatAlarm: false, blindSpotAlert: false });
+  const err80 = BG.getState().instStatus.inst80 || {};
+  eq([err80.state, err80.error], ['error', 'Session terminated, re-login, please.'], 'erro mostrado e o da credencial, sem o "unexpected parameter auth" do corpo misturado');
+  const bodyAfterFirst = scenario.bodyAuthCalls;
+  BG.getState().instBackoff = {}; await poll();
+  eq(scenario.bodyAuthCalls, bodyAfterFirst, 'servidor sem auth no corpo e lembrado: nao tenta o corpo de novo a cada poll');
+  // token bom no mesmo servidor: header funciona normal
+  await setConfig({ instances: [{ id: 'inst80', label: 'Z80', url: 'https://z80', authType: 'token', token: 'tok-bom', enabled: true }] });
+  eq((BG.getState().instStatus.inst80 || {}).state, 'ok', 'token valido no 8.0 (so header) funciona');
+  scenario.rejectBodyAuth = false; scenario.badToken = null;
+  // e o 6.x (sem Bearer) continua caindo pro corpo: outro servidor, outra instancia
+  await setConfig({ instances: [{ id: 'inst60', label: 'Z60', url: 'https://z60', authType: 'token', token: 'tok60', enabled: true }], blindSpotAlert: true });
+  eq((BG.getState().instStatus.inst60 || {}).state, 'ok', 'outra instancia (6.x) nao herda o "sem corpo" da instancia 8.0');
+  // MESMA instancia trocando de um 8.0 pra um 6.x: o "so header" aprendido nao pode grudar
+  // (o "so header" so e aprendido quando o header falha e o corpo e rejeitado: token ruim num 8.0)
+  scenario.rejectBodyAuth = true; scenario.badToken = 'tokA';
+  await setConfig({ instances: [{ id: 'instMv', label: 'MV', url: 'https://z80b', authType: 'token', token: 'tokA', enabled: true }] });
+  eq(BG.getState().authModes.instMv, 'header-only', 'token ruim num 8.0: aprende que o servidor e so header');
+  scenario.rejectBodyAuth = false; scenario.badToken = null; scenario.rejectHeaderAuth = true; // agora o servidor e um 6.x: so corpo
+  await setConfig({ instances: [{ id: 'instMv', label: 'MV', url: 'https://z60b', authType: 'token', token: 'tokA', enabled: true }] });
+  eq((BG.getState().instStatus.instMv || {}).state, 'ok', 'trocar a URL da instancia (8.0 -> 6.x) re-descobre o modo de auth');
+  scenario.rejectHeaderAuth = false; scenario.rejectBodyAuth = true; scenario.badToken = 'tokX';
+  await send({ action: 'testConnection', zabbixUrl: 'https://z80c', authType: 'token', apiToken: 'tokX' }); // Testar num 8.0 com token ruim
+  scenario.rejectBodyAuth = false; scenario.badToken = null; scenario.rejectHeaderAuth = true;
+  const t60 = await send({ action: 'testConnection', zabbixUrl: 'https://z60c', authType: 'token', apiToken: 'tokB' });
+  eq(t60 && t60.ok, true, 'botao Testar num 6.x depois de um teste num 8.0 tambem re-descobre (instId "test" compartilhado)');
+  scenario.rejectHeaderAuth = false;
 
   console.log('\n--- Integracao: ponto cego (instancia que a extensao parou de enxergar) ---');
   const blindNotifs = () => captured.notifs.filter(n => /^zbx-blind-/.test(n.id));

@@ -71,7 +71,7 @@ the options:
 - **API token:** a token generated in Zabbix (User > API tokens). Works with no Zabbix tab open and survives frontend logouts.
 - **Username and password:** the extension logs into the API (`user.login`) and renews the session by itself when it expires.
 
-**Compatibility:** tested on Zabbix 6.0 to 7.4 (frontend session and all API calls work). Zabbix 8.0 will be validated once it reaches a stable release.
+**Compatibility:** tested on Zabbix 6.0 to 8.0 LTS (frontend session, API token, username/password and all API calls work).
 
 ## Privacy
 

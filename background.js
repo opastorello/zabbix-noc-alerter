@@ -161,7 +161,7 @@ let state = {
   lastAlarmTs: 0,         // ultimo toque de som (pro nag)
   lastSeenTs: 0,          // quando o popup foi aberto pela ultima vez (base do badge de 'nao vistos')
   snoozes: {},            // "instId:eventid" -> timestamp ate quando o problema fica em silencio (snooze individual)
-  authModes: {},          // instId -> 'header' | 'body' = modo de auth por instancia (cache; evita 2x request no 6.x)
+  authModes: {},          // instId -> 'header' | 'body' | 'header-only' (7.2+ sem auth no corpo); cache, evita 2x request
   loginTokens: {},        // instId -> sessionid do user.login (modo usuario/senha; invalidado ao expirar)
   status: { state: 'unconfigured' },
   instStatus: {},         // instId -> {state, via, error, total, ...} status individual
@@ -259,6 +259,8 @@ async function getSessionId(baseUrl) {
 
 // Erros do Zabbix que significam "credencial de sessao invalida/expirada"
 const AUTH_ERR_RE = /not authorized|session terminated|re-login|reauthorization|need to be logged/i;
+// Zabbix 7.2+ (8.0 incluso) rejeita o parametro 'auth' no corpo com um erro de schema
+const BODY_AUTH_GONE_RE = /unexpected parameter "auth"/i;
 
 // Modo de autenticacao da instancia; configs antigas (sem authType) derivam do token.
 function instAuthType(inst) {
@@ -327,14 +329,21 @@ async function apiCall(baseUrl, method, params, token, instId) {
 
   if (!token) throw new Error(t('e_nocred', resolveLang(config.lang)));
 
-  // ordem: o modo que ja funcionou nesta instancia primeiro (cache)
+  // ordem: o modo que ja funcionou nesta instancia primeiro (cache). 'header-only' = servidor que
+  // nao aceita mais 'auth' no corpo (Zabbix 7.2+/8.0): nem tenta o corpo.
   const cachedMode = instId ? state.authModes[instId] : null;
-  const order = cachedMode === 'body' ? ['body', 'header'] : ['header', 'body'];
+  const order = cachedMode === 'header-only' ? ['header'] : (cachedMode === 'body' ? ['body', 'header'] : ['header', 'body']);
   const tried = {};
   for (const mode of order) {
     const r = await call(mode);
     tried[mode] = r;
-    if (r.data && !r.data.error) { if (instId) state.authModes[instId] = mode; return r.data.result; }
+    if (r.data && !r.data.error) { if (instId && cachedMode !== 'header-only') state.authModes[instId] = mode; return r.data.result; }
+    // 7.2+ removeu o 'auth' do corpo: a resposta e um erro de schema que nao diz nada sobre a
+    // credencial, so poluia a mensagem real (a do header) e custava 1 request a mais por chamada
+    if (mode === 'body' && r.data && r.data.error && BODY_AUTH_GONE_RE.test(errText(r.data.error, r.res.status))) {
+      if (instId) state.authModes[instId] = 'header-only';
+      delete tried.body;
+    }
   }
 
   const bodyErr = tried.body && tried.body.data && tried.body.data.error && errText(tried.body.data.error, tried.body.res.status);
@@ -1197,7 +1206,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     config = migrateConfig(config);
     saveConfig();
     (config.instances || []).forEach(i => {
-      if (oldConn.get(i.id) !== connSig(i)) { delete state.downSince[i.id]; delete state.blindAlerted[i.id]; }
+      // conexao mudou (ex.: a URL agora aponta pra um 6.x): o modo de auth aprendido nao vale mais
+      if (oldConn.get(i.id) !== connSig(i)) { delete state.downSince[i.id]; delete state.blindAlerted[i.id]; delete state.authModes[i.id]; }
     });
     // Limpar instStatus de instancias removidas
     const validIds = new Set((config.instances || []).map(i => i.id));
@@ -1300,6 +1310,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         token: msg.apiToken || '', username: msg.username || '', password: msg.password || ''
       };
       delete state.loginTokens[instId]; // teste sempre re-loga (credenciais podem ter mudado)
+      delete state.authModes[instId];   // e re-descobre header/corpo: o teste anterior pode ter sido em outro servidor
       let token = null, via = instAuthType(inst);
       try {
         ({ token, via } = await getInstAuth(inst));

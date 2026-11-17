@@ -71,7 +71,7 @@ de tres formas, elegida en las opciones:
 - **Token de API:** un token generado en Zabbix (Usuario > Tokens de API). Funciona sin pestaña de Zabbix abierta y sobrevive al logout del frontend.
 - **Usuario y contraseña:** la extensión inicia sesión en la API (`user.login`) y renueva la sesión sola cuando expira.
 
-**Compatibilidad:** probado en Zabbix 6.0 a 7.4 (la sesión del frontend y todas las llamadas a la API funcionan). Zabbix 8.0 se validará cuando llegue a una versión estable.
+**Compatibilidad:** probado en Zabbix 6.0 a 8.0 LTS (la sesión del frontend, token de API, usuario/contraseña y todas las llamadas a la API funcionan).
 
 ## Privacidad
 

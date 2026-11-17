@@ -51,6 +51,14 @@ in `manifest.json`.
   known problems; with several, "2/3 OK" never said which one failed. The
   status bar now turns amber/red and names the instance and the reason.
 
+### Changed
+- Zabbix 8.0 LTS is supported: validated live (browser session, API token,
+  username/password, problems, operational data, tags, acknowledge, working
+  time) next to 6.0. On Zabbix 7.2+ and 8.0, which no longer accept the
+  credential in the request body, a failing instance now shows the real
+  credential error instead of mixing in an "unexpected parameter auth"
+  message, and no longer spends an extra request per call on it.
+
 ### Internal
 - Every silencing rule (mute, working hours, meeting mode, snooze, maintenance,
   the sound/notification options) is now decided in one place for new
