@@ -572,10 +572,10 @@ async function _pollZabbixOnce() {
   state.instStatus = newInstStatus; // troca atomica: instancia removida/desabilitada some do status
   // um setConfig que mudou o filtro NO MEIO deste poll: os dados vieram com o filtro velho, entao
   // nao valem como baseline (o poll coalescido seguinte, ja com o filtro novo, e que baseia)
-  if (state.filterGen === gen) {
-    if (!state.initialized) state.lastAlarmTs = Date.now();
-    state.initialized = true;
-  }
+  // O relogio do nag e re-ancorado em TODO poll sem baseline (valendo ou nao): o setConfig o zera,
+  // e sem isto o poll em voo soltaria um re-alarme espurio logo apos salvar o filtro.
+  if (!state.initialized) state.lastAlarmTs = Date.now();
+  if (state.filterGen === gen) state.initialized = true;
 
   // URL base da instancia de um problema (pelo _instId nos ativos, ou instId nos resolvidos)
   const baseFor = (instId) => {

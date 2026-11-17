@@ -1100,6 +1100,26 @@ function P(ev, sev, x = {}) { return { eventid: String(ev), objectid: 't' + ev, 
   scenario.byBase['https://zRace'].push(P(422, 3, { name: 'average novo de verdade' }));
   await poll();
   assert(captured.notifs.some(n => n.message === 'average novo de verdade'), 'e um problema novo de verdade depois disso alerta normalmente');
+  // mesma corrida com o re-alarme ligado: o poll em voo (que nao vale como baseline) nao pode soltar
+  // um re-alarme espurio so porque o setConfig zerou o relogio do nag
+  await setConfig({ minSeverity: 4, repeatAlarm: true, repeatInterval: 60, nagNotify: true });
+  await poll();
+  BG.getState().lastAlarmTs = Date.now(); // acabou de alarmar: o nag so pode voltar daqui a 60s
+  let releaseRace2 = null;
+  sandbox.fetch = async (url, opts) => {
+    const b = JSON.parse(opts.body);
+    if (b.method === 'problem.get' && !releaseRace2) await new Promise(r => { releaseRace2 = r; });
+    return fetchOrigRace(url, opts);
+  };
+  resetCaptures();
+  const inflight2 = send({ action: 'pollNow' });
+  await tick(5);
+  const cfg2 = setConfig({ minSeverity: 3 });
+  releaseRace2();
+  await inflight2; await cfg2; await tick(30);
+  sandbox.fetch = fetchOrigRace;
+  eq(captured.notifs.filter(n => n.id === 'zbx-nag').length, 0, 'filtro salvo com poll em voo: nenhum re-alarme espurio (o relogio do nag nao fica zerado)');
+  await setConfig({ repeatAlarm: false });
 
   console.log('\n--- Bug hunt v0.6 (2a passada): snooze que vence DURANTE o mudo com tempo ---');
   // o fim do snooze cai no meio do mudo: o lote "woke" sai silenciado e o snooze e apagado. No fim do
