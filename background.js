@@ -423,6 +423,37 @@ async function isWorkingTime(instances) {
   return { working: list.some(i => inWorkPeriod(i.period, new Date())), error: '' };
 }
 
+// ===== Precedencia de silencio (num lugar so) =====
+// Responde "este TIPO de alerta pode tocar som / mostrar notificacao agora, e se nao, por que".
+// Antes cada regra (mute, fora do horario, reuniao, opcoes de som/notificacao) era checada num
+// ponto diferente do poll, e o bug do resolvido ignorando mute/reuniao foi o preco disso. Toda
+// regra nova de silencio entra AQUI, nao espalhada pelo _pollZabbixOnce.
+// kind: 'fresh' (novo) | 'woke' (fim de snooze) | 'nag' (re-alarme) | 'resolved'
+// ctx: { muted, offHours, inMeeting } calculado uma vez por poll.
+// muted = bloqueio total (o chamador pula ate a contabilidade do nag); offHours/reuniao so
+// suprimem o efeito (som/notificacao), o resto do ciclo segue igual.
+function alertGate(kind, ctx) {
+  const why = [];
+  if (ctx.muted) why.push('muted');
+  if (ctx.offHours) why.push('off-hours');
+  let sound = !why.length && !!config.soundEnabled;
+  let notif = !why.length && !!config.notificationsEnabled;
+  if (ctx.inMeeting && config.meetSuppressSound && sound) { sound = false; why.push('meeting-sound'); }
+  if (ctx.inMeeting && config.meetSuppressNotif && notif) { notif = false; why.push('meeting-notif'); }
+  if (kind === 'resolved') { sound = false; notif = notif && !!config.notifyResolved; }
+  if (kind === 'nag') notif = notif && !!config.nagNotify;
+  return { sound, notif, muted: !!ctx.muted, why };
+}
+
+// Por problema: manutencao nunca alerta; snoozado nao alerta como novo nem no nag; ackado nao
+// re-alerta (fim de snooze, nag).
+function canAlert(p, kind) {
+  if (inMaintenance(p)) return false;
+  if ((kind === 'fresh' || kind === 'nag') && isSnoozed(p)) return false;
+  if ((kind === 'woke' || kind === 'nag') && p.acknowledged === '1') return false;
+  return true;
+}
+
 async function isInMeeting() {
   // NUNCA deixar uma falha de tabs.query (permissao/contexto) abortar o poll inteiro -> sem alerta.
   try {
@@ -547,70 +578,64 @@ async function _pollZabbixOnce() {
     setBadge(allActive.length ? String(allActive.length) : '', SEV_COLOR[maxSev] || '#97aab3');
   }
 
-  // dispara alerta
+  // dispara alerta - toda decisao de silencio passa por alertGate()/canAlert() (precedencia num
+  // lugar so); offHours ja foi calculado acima (antes do setStatus).
   const now = Date.now();
-  const inMeeting = config.suppressDuringMeeting && await isInMeeting();
-  // offHours ja calculado acima (antes do setStatus)
-  const suppressSound = offHours || (inMeeting && config.meetSuppressSound);
-  const suppressNotif = offHours || (inMeeting && config.meetSuppressNotif);
-  if (!config.muted) {
-    // NOVOS: som + notificacao imediatos. Manutencao NAO alarma (so aparece na lista, com a tag MNT).
-    const freshAlert = allFresh.filter(p => !inMaintenance(p) && !isSnoozed(p));
-    if (freshAlert.length) {
-      const freshMax = freshAlert.reduce((m, p) => Math.max(m, Number(p.severity)), 0);
-      let alerted = false;
-      if (config.soundEnabled && !suppressSound) { playSound(soundForSeverity(freshMax), config.volume); alerted = true; }
-      if (config.notificationsEnabled && !suppressNotif) {
-        freshAlert.sort((a, b) => Number(b.severity) - Number(a.severity));
-        const shown = freshAlert.slice(0, MAX_NOTIFS_PER_POLL);
-        const extra = freshAlert.length - shown.length;
-        shown.forEach((p, i) => notify(p, baseFor(p._instId), null, i === shown.length - 1 ? extra : 0));
-        alerted = true;
-      }
-      // conta como "acabou de alarmar" mesmo so com notificacao (som desligado): senao o nag, que
-      // usa lastAlarmTs pra saber quando foi o ultimo alerta, achava que estava atrasado e disparava
-      // uma SEGUNDA notificacao (zbx-nag) no mesmo poll pro problema que acabou de chegar.
-      if (alerted) state.lastAlarmTs = now;
+  const ctx = { muted: !!config.muted, offHours, inMeeting: config.suppressDuringMeeting && await isInMeeting() };
+
+  // alerta um lote (novos ou fim de snooze): um som (o da maior severidade) + ate
+  // MAX_NOTIFS_PER_POLL notificacoes, a ultima avisando "e mais N". Retorna se algo saiu.
+  const alertBatch = (list, gate) => {
+    if (!list.length) return false;
+    let alerted = false;
+    if (gate.sound) {
+      playSound(soundForSeverity(list.reduce((m, p) => Math.max(m, Number(p.severity)), 0)), config.volume);
+      alerted = true;
     }
-    // SNOOZE ACABOU: re-alerta na hora (som + notificacao), mesmo com re-alarme off e sem ser "novo".
-    if (justWoke.length) {
-      const woke = allActive.filter(p => justWoke.includes(snzKey(p)) && p.acknowledged !== '1' && !inMaintenance(p));
-      if (woke.length) {
-        const wokeMax = woke.reduce((m, p) => Math.max(m, Number(p.severity)), 0);
-        let wokeAlerted = false;
-        if (config.soundEnabled && !suppressSound) { playSound(soundForSeverity(wokeMax), config.volume); wokeAlerted = true; }
-        if (config.notificationsEnabled && !suppressNotif) {
-          woke.sort((a, b) => Number(b.severity) - Number(a.severity));
-          const shownWoke = woke.slice(0, MAX_NOTIFS_PER_POLL);
-          const extraWoke = woke.length - shownWoke.length;
-          shownWoke.forEach((p, i) => notify(p, baseFor(p._instId), null, i === shownWoke.length - 1 ? extraWoke : 0));
-          wokeAlerted = true;
-        }
-        if (wokeAlerted) state.lastAlarmTs = now;
-      }
+    if (gate.notif) {
+      const sorted = list.slice().sort((a, b) => Number(b.severity) - Number(a.severity));
+      const shown = sorted.slice(0, MAX_NOTIFS_PER_POLL);
+      const extra = sorted.length - shown.length;
+      shown.forEach((p, i) => notify(p, baseFor(p._instId), null, i === shown.length - 1 ? extra : 0));
+      alerted = true;
     }
-    // NAG: re-alarma enquanto houver problema NAO-ackado (som + notificacao, ate dar ack ou mute)
-    if (config.repeatAlarm && (config.soundEnabled || (config.notificationsEnabled && config.nagNotify))) {
-      const nagPool = allActive.filter(p => p.acknowledged !== '1' && !inMaintenance(p) && !isSnoozed(p)); // manutencao/snooze nao re-alarmam
-      const gap = Math.max(MIN_POLL_SEC, Number(config.repeatInterval) || 60) * 1000;
-      if (nagPool.length && (now - (state.lastAlarmTs || 0)) >= gap) {
-        const nagMax = nagPool.reduce((m, p) => Math.max(m, Number(p.severity)), 0);
-        if (config.soundEnabled && !suppressSound) playSound(soundForSeverity(nagMax), config.volume);
-        // re-notifica o problema de maior severidade com id FIXO -> atualiza no lugar (sem flood)
-        if (config.notificationsEnabled && config.nagNotify && !suppressNotif) {
-          const top = nagPool.find(p => Number(p.severity) === nagMax) || nagPool[0];
-          notify(top, baseFor(top._instId), 'zbx-nag');
-        }
-        state.lastAlarmTs = now;
-      } else if (!nagPool.length) {
-        chrome.notifications.clear('zbx-nag'); // ackou/resolveu tudo -> some a notificacao do re-alarme
+    return alerted;
+  };
+
+  // NOVOS: som + notificacao imediatos. Manutencao NAO alarma (so aparece na lista, com a tag MNT).
+  // Conta como "acabou de alarmar" mesmo so com notificacao (som desligado): senao o nag, que usa
+  // lastAlarmTs, achava que estava atrasado e mandava uma SEGUNDA notificacao no mesmo poll.
+  if (alertBatch(allFresh.filter(p => canAlert(p, 'fresh')), alertGate('fresh', ctx))) state.lastAlarmTs = now;
+
+  // SNOOZE ACABOU: re-alerta na hora, mesmo com re-alarme off e sem ser "novo".
+  if (justWoke.length) {
+    const woke = allActive.filter(p => justWoke.includes(snzKey(p)) && canAlert(p, 'woke'));
+    if (alertBatch(woke, alertGate('woke', ctx))) state.lastAlarmTs = now;
+  }
+
+  // NAG: re-alarma enquanto houver problema NAO-ackado (som + notificacao, ate dar ack ou mute).
+  // Mutado = nem a contabilidade roda (ao desmutar, o lembrete sai no 1o poll); fora do horario e
+  // reuniao so suprimem o efeito, o relogio do nag continua andando.
+  const nagGate = alertGate('nag', ctx);
+  if (!nagGate.muted && config.repeatAlarm && (config.soundEnabled || (config.notificationsEnabled && config.nagNotify))) {
+    const nagPool = allActive.filter(p => canAlert(p, 'nag'));
+    const gap = Math.max(MIN_POLL_SEC, Number(config.repeatInterval) || 60) * 1000;
+    if (nagPool.length && (now - (state.lastAlarmTs || 0)) >= gap) {
+      const nagMax = nagPool.reduce((m, p) => Math.max(m, Number(p.severity)), 0);
+      if (nagGate.sound) playSound(soundForSeverity(nagMax), config.volume);
+      // re-notifica o problema de maior severidade com id FIXO -> atualiza no lugar (sem flood)
+      if (nagGate.notif) {
+        const top = nagPool.find(p => Number(p.severity) === nagMax) || nagPool[0];
+        notify(top, baseFor(top._instId), 'zbx-nag');
       }
+      state.lastAlarmTs = now;
+    } else if (!nagPool.length) {
+      chrome.notifications.clear('zbx-nag'); // ackou/resolveu tudo -> some a notificacao do re-alarme
     }
   }
 
-  // RESOLVIDOS: segue as mesmas regras de silencio dos alertas (mute, off hours, modo reuniao),
-  // em vez de checar so o off hours - senao um resolvido ainda notifica mutado ou em call.
-  if (!config.muted && config.notifyResolved && config.notificationsEnabled && !suppressNotif && allResolved.length) {
+  // RESOLVIDOS: mesmas regras de silencio dos alertas (mute, fora do horario, reuniao).
+  if (alertGate('resolved', ctx).notif && allResolved.length) {
     const shownResolved = allResolved.slice(0, MAX_NOTIFS_PER_POLL);
     const extraResolved = allResolved.length - shownResolved.length;
     shownResolved.forEach((p, i) => notifyResolved(p, baseFor(p.instId), i === shownResolved.length - 1 ? extraResolved : 0));

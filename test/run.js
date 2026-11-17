@@ -185,6 +185,26 @@ function P(ev, sev, x = {}) { return { eventid: String(ev), objectid: 't' + ev, 
   assert(sandbox.inWorkPeriod('lixo-invalido', qua10) === true, 'inWorkPeriod: formato invalido = fail-open');
   assert(sandbox.inWorkPeriod('1-7,00:00-24:00', dom10) === true, 'inWorkPeriod: 00:00-24:00 cobre o dia todo');
 
+  // alertGate / canAlert: precedencia de silencio num lugar so
+  const G = (kind, ctx, cfgOver) => { const c = BG.getConfig(); const saved = { ...c }; Object.assign(c, { soundEnabled: true, notificationsEnabled: true, notifyResolved: true, nagNotify: true, meetSuppressSound: true, meetSuppressNotif: true }, cfgOver || {}); const g = sandbox.alertGate(kind, ctx); Object.keys(c).forEach(k => delete c[k]); Object.assign(c, saved); return [g.sound, g.notif]; };
+  const C0 = { muted: false, offHours: false, inMeeting: false };
+  eq(G('fresh', C0), [true, true], 'alertGate: sem nada ativo, novo toca e notifica');
+  eq(G('fresh', { ...C0, muted: true }), [false, false], 'alertGate: mudo bloqueia tudo');
+  eq(sandbox.alertGate('fresh', { ...C0, muted: true }).muted, true, 'alertGate: mudo marca muted=true (chamador pula ate o nag)');
+  eq(G('fresh', { ...C0, offHours: true }), [false, false], 'alertGate: fora do horario bloqueia som e notificacao');
+  eq(G('fresh', { ...C0, inMeeting: true }, { meetSuppressSound: true, meetSuppressNotif: false }), [false, true], 'alertGate: reuniao so com som suprimido');
+  eq(G('fresh', { ...C0, inMeeting: true }, { meetSuppressSound: false, meetSuppressNotif: true }), [true, false], 'alertGate: reuniao so com notificacao suprimida');
+  eq(G('fresh', C0, { soundEnabled: false }), [false, true], 'alertGate: opcao de som desligada');
+  eq(G('resolved', C0), [false, true], 'alertGate: resolvido nunca toca som, so notifica');
+  eq(G('resolved', C0, { notifyResolved: false }), [false, false], 'alertGate: resolvido respeita notifyResolved');
+  eq(G('resolved', { ...C0, muted: true }), [false, false], 'alertGate: resolvido respeita o mudo');
+  eq(G('nag', C0, { nagNotify: false }), [true, false], 'alertGate: nag sem nagNotify = so som');
+  const maintP = { eventid: '1', _instId: 'x', acknowledged: '0', suppression_data: [{ maintenanceid: '3' }] };
+  const ackP = { eventid: '2', _instId: 'x', acknowledged: '1', suppression_data: [] };
+  ['fresh', 'woke', 'nag'].forEach(k => assert(sandbox.canAlert(maintP, k) === false, 'canAlert: manutencao nunca alerta (' + k + ')'));
+  assert(sandbox.canAlert(ackP, 'fresh') === true, 'canAlert: ackado ainda alerta como novo');
+  assert(sandbox.canAlert(ackP, 'woke') === false && sandbox.canAlert(ackP, 'nag') === false, 'canAlert: ackado nao re-alerta (fim de snooze, nag)');
+
   // resolveLang
   eq(sandbox.resolveLang('en'), 'en', 'resolveLang: idioma valido');
   assert(['pt', 'en', 'es'].includes(sandbox.resolveLang('xx')), 'resolveLang: idioma invalido cai num suportado');

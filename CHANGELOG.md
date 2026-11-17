@@ -26,6 +26,12 @@ in `manifest.json`.
   0.3.0 notes already promised tokens were "never overwritten on import"; that
   only held for the legacy single-instance token until now.
 
+### Internal
+- Every silencing rule (mute, working hours, meeting mode, snooze, maintenance,
+  the sound/notification options) is now decided in one place for new
+  problems, snooze expiry, the re-alarm and the resolved notification, instead
+  of being checked separately in each path.
+
 ## [0.5.0]
 
 ### Added
