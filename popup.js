@@ -55,6 +55,7 @@ function load() {
   chrome.runtime.sendMessage({ action: 'getConfig' }, (r) => {
     cfg = r?.config || {};
     disp = displayOpts(cfg);
+    applyDisplay();
     lang = resolveLang(cfg.lang);
     applyI18n(lang);
     renderMute();
@@ -216,9 +217,22 @@ function displayOpts(c) {
     tagNameFormat: ['full', 'short', 'none'].includes(c.tagNameFormat) ? c.tagNameFormat : 'full',
     tagPriority: String(c.tagPriority || '').split(/[,\n]/).map(s => s.trim().toLowerCase()).filter(Boolean),
     opdataMode: ['none', 'separate', 'name'].includes(c.opdataMode) ? c.opdataMode : 'separate',
+    showAckMsg: c.showAckMsg !== false,
+    showRowActions: c.showRowActions !== false,
+    showSevCounts: c.showSevCounts !== false,
+    compactRows: c.compactRows === true,
   };
 }
 let disp = displayOpts({});
+
+// partes fixas do popup que dependem da exibicao (a barra de contadores por severidade)
+function applyDisplay() {
+  const sr = document.querySelector('.stats-row');
+  if (sr) sr.style.display = disp.showSevCounts ? '' : 'none';
+  // a barra e tambem o filtro por severidade: escondida, um filtro salvo nao teria como ser
+  // desfeito e a lista ficaria filtrada sem o usuario ver por que. Limpa.
+  if (!disp.showSevCounts && sevFilter !== null) sevFilter = null;
+}
 
 // tags na ordem de exibicao: as da prioridade primeiro (na ordem da lista), o resto na ordem do Zabbix
 function orderTags(tags, priority) {
@@ -236,7 +250,7 @@ function tagChipText(tg, fmt) {
 }
 function tagRowHtml(p) {
   const tags = p.tags || [];
-  if (!tags.length || !disp.showTags) return '';
+  if (!tags.length || !disp.showTags || disp.compactRows) return '';
   const ordered = orderTags(tags, disp.tagPriority);
   const shown = ordered.slice(0, disp.showTags), rest = ordered.slice(disp.showTags);
   // data-tag sempre "tag:valor" completo: o clique filtra igual, mostre o chip o que mostrar
@@ -295,24 +309,29 @@ function renderList(problems, filtered, groupBy) {
     const snoozed = p.snoozedUntil && p.snoozedUntil > Date.now();
     // opdata (valor do trigger) como no Zabbix: linha separada, entre parenteses junto do nome, ou nada
     const op = String(p.opdata || '').trim();
-    const nameTxt = (op && disp.opdataMode === 'name') ? (p.name || '') + ' (' + op + ')' : p.name;
+    // compacto = uma linha so: o opdata "em linha separada" vai junto do nome em vez de sumir
+    const opMode = (disp.compactRows && disp.opdataMode === 'separate') ? 'name' : disp.opdataMode;
+    const nameTxt = (op && opMode === 'name') ? (p.name || '') + ' (' + op + ')' : p.name;
     const instBadge = (multiInst && p.instLabel) ? `<span class="inst-badge">${esc(p.instLabel)}</span>` : '';
     const tags = (p.unseen ? `<span class="tag new" title="${t('tag_new', lang)}">${t('tag_new', lang)}</span>` : '')
       + (p.acknowledged ? '<span class="tag ackd">&#x2713; ACK</span>' : '')
       + (p.maintenance ? `<span class="tag mnt" title="${t('tag_maint', lang)}">MNT</span>`
         : (p.suppressed ? '<span class="tag">SUP</span>' : ''));
+    // botoes desligados (ex.: usuario sem permissao de ACK): o adiado continua visivel, como selo
     const snzBtn = snoozed
-      ? `<button class="snzbtn snoozed" data-ev="${p.eventid}" data-inst="${p.instId || ''}" title="${t('snz_wake', lang)}">SNZ ${snzRemain(p.snoozedUntil)}</button>`
-      : (p.acknowledged ? '' : `<button class="snzbtn" data-ev="${p.eventid}" data-inst="${p.instId || ''}" title="${t('snz_do', lang)}">SNZ</button>`);
-    const ackBtn = p.acknowledged ? '' : `<button class="ackbtn" data-ev="${p.eventid}" data-inst="${p.instId || ''}" title="${t('ack_do', lang)}">ACK</button>`;
-    return `<div class="row ${cls}${p.acknowledged ? ' is-ack' : ''}${snoozed ? ' is-snoozed' : ''}" role="button" tabindex="0" data-ev="${p.eventid}" data-tid="${p.objectid || ''}" data-hostid="${p.hostid || ''}" data-inst="${p.instId || ''}" title="${t('open_problem', lang)}">
+      ? (disp.showRowActions
+        ? `<button class="snzbtn snoozed" data-ev="${p.eventid}" data-inst="${p.instId || ''}" title="${t('snz_wake', lang)}">SNZ ${snzRemain(p.snoozedUntil)}</button>`
+        : `<span class="tag snz" title="${t('snz_do', lang)}">SNZ ${snzRemain(p.snoozedUntil)}</span>`)
+      : (p.acknowledged || !disp.showRowActions ? '' : `<button class="snzbtn" data-ev="${p.eventid}" data-inst="${p.instId || ''}" title="${t('snz_do', lang)}">SNZ</button>`);
+    const ackBtn = (p.acknowledged || !disp.showRowActions) ? '' : `<button class="ackbtn" data-ev="${p.eventid}" data-inst="${p.instId || ''}" title="${t('ack_do', lang)}">ACK</button>`;
+    return `<div class="row ${cls}${p.acknowledged ? ' is-ack' : ''}${snoozed ? ' is-snoozed' : ''}${disp.compactRows ? ' compact' : ''}" role="button" tabindex="0" data-ev="${p.eventid}" data-tid="${p.objectid || ''}" data-hostid="${p.hostid || ''}" data-inst="${p.instId || ''}" title="${t('open_problem', lang)}">
       <span class="badge ${cls}">${lbl}</span>
       <div class="txt">
         ${p.host ? `<div class="host">${instBadge}${esc(p.host)}</div>` : (instBadge ? `<div class="host">${instBadge}</div>` : '')}
         <div class="name" title="${esc(nameTxt)}">${esc(nameTxt)}</div>
-        ${op && disp.opdataMode === 'separate' ? `<div class="opdata" title="${esc(op)}">${esc(op)}</div>` : ''}
+        ${op && opMode === 'separate' ? `<div class="opdata" title="${esc(op)}">${esc(op)}</div>` : ''}
         ${tagRowHtml(p)}
-        ${p.acknowledged && p.ackmsg ? `<div class="ackinfo" title="${esc(p.ackmsg)}">&#x2713; ${esc(p.ackmsg)}</div>` : ''}
+        ${disp.showAckMsg && !disp.compactRows && p.acknowledged && p.ackmsg ? `<div class="ackinfo" title="${esc(p.ackmsg)}">&#x2713; ${esc(p.ackmsg)}</div>` : ''}
       </div>
       <div class="meta">${tags}${snzBtn}${ackBtn}<span class="age">${ago(p.clock * 1000)}</span></div>
     </div>`;

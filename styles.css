@@ -56,6 +56,12 @@ header h1 { font-size:13px; font-weight:700; color:var(--accent); white-space:no
 .snzbtn:hover { background:#2c2f3a; color:#cfd6e0; }
 .snzbtn.snoozed { background:#2e2a16; color:#d9b85a; border-color:#4a3f1a; }
 .row.is-snoozed { opacity:0.55; }
+.tag.snz { background:#2e2a16; color:#d9b85a; border-color:#4a3f1a; } /* adiado sem os botoes da linha (Exibicao) */
+/* modo compacto (Exibicao): host e nome numa linha so, menos respiro */
+.row.compact { padding:3px 6px; margin-bottom:2px; }
+.row.compact .txt { flex-direction:row; align-items:baseline; gap:6px; }
+.row.compact .host { flex-shrink:0; max-width:45%; }
+.row.compact .name { flex:1; min-width:0; }
 /* agrupamento da lista (por host ou instancia); cabecalho colapsavel */
 .grp { margin-bottom:6px; }
 .grp-head { display:flex; align-items:center; gap:6px; padding:5px 7px; background:var(--bg-hover); border:1px solid var(--border); border-left:3px solid var(--border); border-radius:4px; cursor:pointer; user-select:none; margin-bottom:3px; }

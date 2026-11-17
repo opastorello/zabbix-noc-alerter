@@ -47,6 +47,10 @@ const DEFAULT_CONFIG = {
   tagNameFormat: 'full',  // 'full' (service:web) | 'short' (ser:web) | 'none' (web)
   tagPriority: '',        // nomes de tag que aparecem primeiro, nesta ordem (virgula)
   opdataMode: 'separate', // valor do trigger no popup: 'separate' (linha propria) | 'name' (junto do nome) | 'none'
+  showAckMsg: true,       // mensagem do ACK embaixo do problema reconhecido
+  showRowActions: true,   // botoes SNZ/ACK em cada linha (desligar: quem nao tem permissao de ACK)
+  showSevCounts: true,    // barra de contadores por severidade (que tambem filtra)
+  compactRows: false,     // uma linha por problema
   lang: ''                // '' = auto (idioma do navegador); 'pt' | 'en' | 'es'
 };
 

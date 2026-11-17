@@ -146,7 +146,7 @@ const popSandbox = {
 };
 vm.createContext(popSandbox);
 vm.runInContext(i18nSrc, popSandbox, { filename: 'i18n.js' });
-vm.runInContext(popupSrc + '\n;globalThis.__pop = { setDisp: (c) => { disp = displayOpts(c); } };', popSandbox, { filename: 'popup.js' });
+vm.runInContext(popupSrc + '\n;globalThis.__pop = { setDisp: (c) => { disp = displayOpts(c); }, getSevFilter: () => sevFilter, setSevFilter: (v) => { sevFilter = v; } };', popSandbox, { filename: 'popup.js' });
 // HTML da linha de UM problema com estas opcoes de exibicao (config parcial; o resto no padrao)
 function popRow(p, c) {
   try { popSandbox.__pop.setDisp(c || {}); popSandbox.renderList([p], false, 'none'); return popEl('list').innerHTML; }
@@ -1219,6 +1219,36 @@ function P(ev, sev, x = {}) { return { eventid: String(ev), objectid: 't' + ev, 
   eq([nameOf(rowH), opLine(rowH)], ['CPU alta', null], 'nao mostrar: nem linha separada, nem no nome');
   eq(nameOf(popRow({ ...opP, opdata: '  ' }, { opdataMode: 'name' })), 'CPU alta', 'problema sem opdata (ou so espacos): nome sem parenteses vazios');
   eq(opLine(popRow(opP, { opdataMode: 'xx' })), 'CPU: 97.3 %', 'valor invalido no config cai no padrao (linha separada)');
+
+  console.log('\n--- Exibicao: itens da linha e do topo (mensagem do ACK, SNZ/ACK, contadores, compacto) ---');
+  eq([DEF.showAckMsg, DEF.showRowActions, DEF.showSevCounts, DEF.compactRows], [true, true, true, false], 'padroes = visual de antes');
+  const dAckP = { eventid: '4', instId: 'i1', host: 'db-01', name: 'Disco cheio', severity: '4', clock: '1', acknowledged: true, ackmsg: 'limpando logs', opdata: 'free 3 %', tags: [{ tag: 'service', value: 'db' }] };
+  const dOpenP = { eventid: '5', instId: 'i1', host: 'web-01', name: 'CPU alta', severity: '4', clock: '1', opdata: 'CPU 97 %', tags: [{ tag: 'service', value: 'web' }] };
+  const dSnzP = { ...dOpenP, eventid: '6', snoozedUntil: Date.now() + 10 * 60000 };
+  assert(/class="ackinfo"[^>]*>[^<]*limpando logs/.test(popRow(dAckP, {})), 'sem config: mensagem do ACK embaixo do problema (igual a antes)');
+  rowH = popRow(dAckP, { showAckMsg: false });
+  assert(!/ackinfo/.test(rowH) && /tag ackd/.test(rowH), 'mensagem do ACK desligada: a linha da mensagem some, o selo ACK fica');
+  rowH = popRow(dOpenP, {});
+  assert(/class="snzbtn"/.test(rowH) && /class="ackbtn"/.test(rowH), 'sem config: botoes SNZ e ACK na linha');
+  rowH = popRow(dOpenP, { showRowActions: false });
+  assert(/CPU alta/.test(rowH) && !/snzbtn|ackbtn/.test(rowH), 'botoes desligados: a linha sem SNZ nem ACK');
+  rowH = popRow(dSnzP, { showRowActions: false });
+  assert(!/snzbtn/.test(rowH) && /class="tag snz"[^>]*>SNZ 10m</.test(rowH), 'botoes desligados com o problema adiado: o estado continua visivel, como selo "SNZ 10m"');
+  rowH = popRow(dOpenP, { compactRows: true });
+  assert(/class="row [^"]*\bcompact\b/.test(rowH), 'compacto: a linha ganha a classe compact (host e nome numa linha so, via CSS)');
+  assert(/CPU alta/.test(rowH) && !/tagrow/.test(rowH) && !/class="opdata"/.test(rowH), 'compacto: sem a fila de tags e sem a linha separada do opdata');
+  eq(nameOf(rowH), 'CPU alta (CPU 97 %)', 'compacto com opdata em linha separada: o valor vai junto do nome em vez de sumir');
+  eq(nameOf(popRow(dOpenP, { compactRows: true, opdataMode: 'none' })), 'CPU alta', 'compacto com opdata desligado: continua desligado');
+  rowH = popRow(dAckP, { compactRows: true });
+  assert(/Disco cheio/.test(rowH) && !/ackinfo/.test(rowH), 'compacto: sem a linha da mensagem do ACK');
+  try {
+    popSandbox.__pop.setSevFilter(5);
+    popSandbox.__pop.setDisp({ showSevCounts: false }); popSandbox.applyDisplay();
+    eq(popEl('.stats-row').style.display, 'none', 'contadores desligados: a barra de severidade some');
+    eq(popSandbox.__pop.getSevFilter(), null, '...e um filtro de severidade salvo e limpo (sem a barra nao teria como tirar, e a lista ficaria filtrada as cegas)');
+    popSandbox.__pop.setDisp({}); popSandbox.applyDisplay();
+    eq(popEl('.stats-row').style.display, '', 'contadores ligados (padrao): a barra aparece');
+  } catch (e) { assert(false, 'applyDisplay: ' + e.message); }
 
   console.log('\n--- popup: aspas no nome/host/tag nao quebram os atributos da linha ---');
   // esc() do popup nao escapava aspas (o das Opcoes ja escapava): title="${esc(nome)}" com aspas no

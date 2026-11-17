@@ -227,6 +227,16 @@
           <option value="none" data-i18n="opdata_none">Não mostrar</option>
         </select>
       </div>
+      <div class="field"><label class="check"><input type="checkbox" id="showAckMsg"> <span data-i18n="show_ackmsg">Mostrar a mensagem do ACK embaixo do problema</span></label></div>
+      <div class="field">
+        <label class="check"><input type="checkbox" id="showRowActions"> <span data-i18n="show_actions">Mostrar os botões SNZ e ACK em cada problema</span></label>
+        <div class="desc" data-i18n="show_actions_desc">Desligue se o seu usuário não tem permissão de ACK no Zabbix.</div>
+      </div>
+      <div class="field"><label class="check"><input type="checkbox" id="showSevCounts"> <span data-i18n="show_counts">Mostrar os contadores por severidade</span></label></div>
+      <div class="field">
+        <label class="check"><input type="checkbox" id="compactRows"> <span data-i18n="compact_rows">Modo compacto (uma linha por problema)</span></label>
+        <div class="desc" data-i18n="compact_desc">Host e problema na mesma linha; o opdata vai junto do nome, e tags e mensagem do ACK ficam de fora.</div>
+      </div>
     </div>
   </div>
 

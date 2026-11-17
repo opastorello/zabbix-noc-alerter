@@ -12,7 +12,7 @@ const MAX_INSTANCES = 8;
 const NUM = ['pollInterval', 'repeatInterval'];
 const SEL = ['minSeverity', 'soundSev5', 'soundSev4', 'soundSev3', 'soundSev2', 'soundSev1', 'showTags', 'tagNameFormat', 'opdataMode'];
 const SEL_NUM = ['minSeverity', 'showTags']; // selects cujo valor e numero no config
-const CHK = ['soundEnabled', 'notificationsEnabled', 'notifyResolved', 'badgeUnseen', 'repeatAlarm', 'nagNotify', 'suppressDuringMeeting', 'meetSuppressNotif', 'meetSuppressSound', 'workingTimeOnly', 'blindSpotAlert', 'ignoreAckd', 'ignoreSuppressed', 'ignoreMaintenance'];
+const CHK = ['soundEnabled', 'notificationsEnabled', 'notifyResolved', 'badgeUnseen', 'repeatAlarm', 'nagNotify', 'suppressDuringMeeting', 'meetSuppressNotif', 'meetSuppressSound', 'workingTimeOnly', 'blindSpotAlert', 'ignoreAckd', 'ignoreSuppressed', 'ignoreMaintenance', 'showAckMsg', 'showRowActions', 'showSevCounts', 'compactRows'];
 
 let currentLang = 'pt';
 
@@ -372,6 +372,7 @@ function resetSettings() {
     suppressDuringMeeting: true, meetSuppressNotif: true, meetSuppressSound: true, workingTimeOnly: false,
     blindSpotAlert: true, blindSpotMinutes: 2,
     showTags: 3, tagNameFormat: 'full', tagPriority: '', opdataMode: 'separate',
+    showAckMsg: true, showRowActions: true, showSevCounts: true, compactRows: false,
     lang: currentLang
   };
   chrome.runtime.sendMessage({ action: 'setConfig', config: defaults }, () => {
