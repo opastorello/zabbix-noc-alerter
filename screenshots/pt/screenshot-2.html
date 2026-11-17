@@ -18,23 +18,33 @@
   .toast .body{font-size:15px;color:#c8ccd4;margin-bottom:10px;}
   .toast .app{font-size:12px;color:#7a8090;display:flex;align-items:center;gap:7px;}
   .toast .app img{width:16px;height:16px;border-radius:3px;}
+  .toast .btns{display:flex;gap:8px;margin-top:12px;}
+  .toast .btn{flex:1;text-align:center;font-size:13px;font-weight:600;color:#e6e6e6;background:#2a2b31;border:1px solid #3a3b44;border-radius:7px;padding:7px 0;}
+  .toast.blind{border-color:#5a4a1e;}
+  .toast.blind .title{color:#f5c26b;}
 </style></head>
 <body>
 <div class="slide">
   <div class="col-text">
     <div class="eyebrow">Zabbix NOC Alerter</div>
     <h1>Notificações<br>que aparecem</h1>
-    <p>Uma notificação do navegador para cada problema novo, com o nome do host, mesmo com a aba em segundo plano. Clique e abra o evento exato no Zabbix.</p>
+    <p>Uma notificação para cada problema novo, com o host e o valor do trigger, mesmo com a aba em segundo plano. Dê ACK ou adie ali mesmo, ou clique e abra o evento exato no Zabbix.</p>
   </div>
   <div class="col-art">
     <div class="toast"><img class="ic" src="../../icons/icon128.png" alt="">
       <div class="tt"><div class="title"><span class="tag dis">DESASTRE</span>db-primary-01</div>
       <div class="body">Sem resposta ao ping ICMP</div>
-      <div class="app"><img src="../../icons/icon16.png" alt="">Zabbix NOC Alerter - clique para abrir</div></div></div>
+      <div class="app"><img src="../../icons/icon16.png" alt="">Zabbix NOC Alerter - clique para abrir</div>
+      <div class="btns"><span class="btn">ACK</span><span class="btn">Adiar 15 min</span></div></div></div>
     <div class="toast"><img class="ic" src="../../icons/icon128.png" alt="">
       <div class="tt"><div class="title"><span class="tag high">ALTA</span>web-prod-02</div>
-      <div class="body">Uso de CPU alto (acima de 90% por 5m)</div>
-      <div class="app"><img src="../../icons/icon16.png" alt="">Zabbix NOC Alerter - clique para abrir</div></div></div>
+      <div class="body">Uso de CPU alto (acima de 90% por 5m) - CPU:&nbsp;97.3&nbsp;%</div>
+      <div class="app"><img src="../../icons/icon16.png" alt="">Zabbix NOC Alerter - clique para abrir</div>
+      <div class="btns"><span class="btn">ACK</span><span class="btn">Adiar 15 min</span></div></div></div>
+    <div class="toast blind"><img class="ic" src="../../icons/icon128.png" alt="">
+      <div class="tt"><div class="title">Ponto cego: sem visão do HML</div>
+      <div class="body">Sem sessão do Zabbix - faça login (ou use token nas opções).</div>
+      <div class="app"><img src="../../icons/icon16.png" alt="">Zabbix NOC Alerter - há 2 min sem conseguir ler os problemas - clique para abrir</div></div></div>
   </div>
 </div>
 </body></html>
