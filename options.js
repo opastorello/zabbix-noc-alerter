@@ -186,6 +186,11 @@ function createInstanceCard(inst, idx) {
         <input type="text" class="inst-groups" value="${esc(inst.hostGroups || '')}" data-i18n-ph="inst_groups_ph" placeholder="${esc(t('inst_groups_ph', currentLang))}" autocomplete="off">
         <div class="desc" data-i18n="inst_groups_desc">${esc(t('inst_groups_desc', currentLang))}</div>
       </div>
+      <div class="inst-field">
+        <label data-i18n="inst_tags">${esc(t('inst_tags', currentLang))}</label>
+        <input type="text" class="inst-tags" value="${esc(inst.tags || '')}" placeholder="service:web, env=prod, team" autocomplete="off">
+        <div class="desc" data-i18n="inst_tags_desc">${esc(t('inst_tags_desc', currentLang))}</div>
+      </div>
       <div class="inst-actions">
         <button class="btn-test inst-test-btn" data-i18n="inst_test">${esc(t('inst_test', currentLang))}</button>
         <span class="inst-status"></span>
@@ -283,6 +288,7 @@ function collectInstances() {
       username: card.querySelector('.inst-user').value.trim(),
       password: card.querySelector('.inst-pass').value,
       hostGroups: card.querySelector('.inst-groups').value.trim(),
+      tags: card.querySelector('.inst-tags').value.trim(),
       enabled: card.querySelector('.inst-enabled').checked
     });
   });

@@ -6,7 +6,7 @@
 
 importScripts('i18n.js'); // traducoes (I18N, t, resolveLang) tambem no service worker
 
-const DEFAULT_INSTANCE = { id: '', label: '', url: '', authType: 'session', token: '', username: '', password: '', enabled: true, hostGroups: '' };
+const DEFAULT_INSTANCE = { id: '', label: '', url: '', authType: 'session', token: '', username: '', password: '', enabled: true, hostGroups: '', tags: '' };
 const MAX_INSTANCES = 8;
 
 const DEFAULT_CONFIG = {
@@ -68,7 +68,7 @@ function enabledInstances(cfg) {
 // si mudou; salvar uma opcao qualquer (som, volume, idioma...) nao pode fazer um problema novo virar
 // "ja conhecido" so por coincidir com a janela do save.
 function filterSignature(cfg) {
-  const inst = (cfg.instances || []).map(i => [i.id, i.url, i.hostGroups || '', !!i.enabled]);
+  const inst = (cfg.instances || []).map(i => [i.id, i.url, i.hostGroups || '', i.tags || '', !!i.enabled]);
   return JSON.stringify([
     Number(cfg.minSeverity) || 0, cfg.excludePatterns || '', !!cfg.ignoreAckd,
     !!cfg.ignoreMaintenance, !!cfg.ignoreSuppressed, Number(cfg.maxAgeDays) || 0, inst
@@ -96,6 +96,25 @@ function mergeImportedConfig(current, incoming) {
     });
   }
   return data;
+}
+
+// Filtro de tags da instancia (empurrado pro problem.get, igual ao groupids): virgula ou linha.
+//   tag        -> a tag existe (operator 4)
+//   tag:valor  -> o valor CONTEM (operator 0, o padrao do Zabbix)
+//   tag=valor  -> o valor e IGUAL (operator 1)
+// So o primeiro ':' ou '=' separa (o valor pode ter ':', ex.: uma URL). Sem nome de tag = ignorado.
+function parseTagFilter(str) {
+  const out = [];
+  for (const raw of String(str || '').split(/[\n,]/)) {
+    const s = raw.trim();
+    if (!s) continue;
+    const m = s.match(/^([^:=]*)([:=])(.*)$/);
+    if (!m) { out.push({ tag: s, value: '', operator: 4 }); continue; }
+    const tag = m[1].trim();
+    if (!tag) continue;
+    out.push({ tag, value: m[3].trim(), operator: m[2] === '=' ? 1 : 0 });
+  }
+  return out;
 }
 
 // Resolve os nomes de host group de uma instancia para groupids, cacheado por instId+nomes.
@@ -592,6 +611,7 @@ async function _pollZabbixOnce() {
           suppressed: p.suppressed === '1', maintenance: inMaintenance(p),
           snoozedUntil: Number(state.snoozes[snzKey(p)] || 0), ackmsg: p.ackmsg || '',
           opdata: String(p.opdata || '').trim(),
+          tags: (Array.isArray(p.tags) ? p.tags : []).map(tg => ({ tag: String(tg.tag || ''), value: String(tg.value || '') })),
           instId: p._instId, instLabel: p._instLabel, unseen
         };
       })
@@ -789,6 +809,7 @@ async function _pollInstance(inst, _retried) {
       output: ['eventid', 'objectid', 'name', 'severity', 'clock', 'acknowledged', 'suppressed', 'opdata'],
       selectAcknowledges: ['clock', 'message'],
       selectSuppressionData: ['maintenanceid'], // distingue manutencao de supressao manual
+      selectTags: ['tag', 'value'],             // chips na linha do popup + filtro por tag
       recent: false,
       sortfield: ['eventid'],
       sortorder: 'DESC',
@@ -798,6 +819,8 @@ async function _pollInstance(inst, _retried) {
     if (_min > 0) pget.severities = Array.from({ length: 6 - _min }, (_, i) => _min + i);
     const gids = await resolveGroupIds(base, token, inst); // filtro por host group (opcional, corta no servidor)
     if (gids.length) pget.groupids = gids;
+    const tagFilter = parseTagFilter(inst.tags); // filtro por tag (opcional, corta no servidor)
+    if (tagFilter.length) { pget.tags = tagFilter; pget.evaltype = 0; } // 0 = E/Ou, o padrao do Zabbix
     problems = await apiCall(base, 'problem.get', pget, token, inst.id);
   } catch (e) {
     const emsg = String((e && e.message) || e);

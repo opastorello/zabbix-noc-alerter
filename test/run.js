@@ -491,6 +491,31 @@ function P(ev, sev, x = {}) { return { eventid: String(ev), objectid: 't' + ev, 
   notifClickListener(nFail.id); await tick(30);
   assert(openedTabs.some(o => /eventid=343/.test(o.url)), 'clique no corpo da notificacao continua abrindo o evento');
 
+  console.log('\n--- Tags: filtro por instancia (servidor) + tags no status ---');
+  eq(sandbox.parseTagFilter(''), [], 'parseTagFilter: vazio = sem filtro');
+  eq(sandbox.parseTagFilter('service:web, env=prod\nteam'), [
+    { tag: 'service', value: 'web', operator: 0 }, { tag: 'env', value: 'prod', operator: 1 }, { tag: 'team', value: '', operator: 4 },
+  ], 'parseTagFilter: tag:valor = contem (0), tag=valor = igual (1), so tag = existe (4)');
+  eq(sandbox.parseTagFilter(' url : http://x:8080 '), [{ tag: 'url', value: 'http://x:8080', operator: 0 }], 'parseTagFilter: so o 1o ":" separa (valor pode ter ":")');
+  eq(sandbox.parseTagFilter(', ,:x,=y'), [], 'parseTagFilter: entradas sem nome de tag sao ignoradas');
+  scenario.byBase = { 'https://zTag': [P(360, 4, { tags: [{ tag: 'service', value: 'web' }, { tag: 'team', value: 'noc' }] }), P(361, 3)], 'https://z2': [] };
+  await setConfig({ instances: [{ id: 'instTag', label: 'PRD', url: 'https://zTag', token: 't1', enabled: true, tags: 'service:web, env=prod' }], minSeverity: 0, repeatAlarm: false, muted: false });
+  await poll();
+  const tagGet = scenario.lastProblemGet['https://zTag'];
+  eq(tagGet.tags, [{ tag: 'service', value: 'web', operator: 0 }, { tag: 'env', value: 'prod', operator: 1 }], 'problem.get recebe o filtro de tags da instancia (corta no servidor)');
+  eq(tagGet.evaltype, 0, 'evaltype 0 (E/Ou: mesma tag = OU, tags diferentes = E), igual ao padrao do Zabbix');
+  assert(Array.isArray(tagGet.selectTags) && tagGet.selectTags.includes('tag') && tagGet.selectTags.includes('value'), 'problem.get pede as tags de cada problema (selectTags)');
+  eq(probByEvent('instTag', '360').tags, [{ tag: 'service', value: 'web' }, { tag: 'team', value: 'noc' }], 'tags vao no status do problema (popup mostra os chips)');
+  eq(probByEvent('instTag', '361').tags, [], 'problema sem tag = lista vazia');
+  await setConfig({ instances: [{ id: 'instTag', label: 'PRD', url: 'https://zTag', token: 't1', enabled: true, tags: '' }] });
+  await poll();
+  assert(scenario.lastProblemGet['https://zTag'].tags === undefined, 'sem filtro de tags: nao manda o parametro tags');
+  // mudar o filtro de tags muda o conjunto visivel -> re-baseline (problema recem-visivel nao alerta como novo)
+  scenario.byBase['https://zTag'].push(P(362, 5, { name: 'ja existia, so ficou visivel' }));
+  resetCaptures();
+  await setConfig({ instances: [{ id: 'instTag', label: 'PRD', url: 'https://zTag', token: 't1', enabled: true, tags: 'team' }] }); // o poll do proprio setConfig e o que alertaria
+  assert(!captured.sounds.length && !captured.notifs.length, 'trocar o filtro de tags re-baseia: problema que so ficou visivel nao alerta');
+
   console.log('\n--- Integracao: ponto cego (instancia que a extensao parou de enxergar) ---');
   const blindNotifs = () => captured.notifs.filter(n => /^zbx-blind-/.test(n.id));
   const ageDown = (id, min) => { BG.getState().downSince[id] = Date.now() - min * 60000; };

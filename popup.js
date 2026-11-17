@@ -173,7 +173,8 @@ function applyFilter() {
   const term = (document.getElementById('filterBox').value || '').trim().toLowerCase();
   let list = allProblems;
   if (sevFilter !== null) list = list.filter(p => sevFilter === 'info' ? Number(p.severity) <= 1 : Number(p.severity) === sevFilter);
-  if (term) list = list.filter(p => ((p.host || '') + ' ' + (p.name || '')).toLowerCase().includes(term));
+  // o texto casa host, nome e as tags ("service:web"), entao clicar num chip de tag e so preencher o filtro
+  if (term) list = list.filter(p => ((p.host || '') + ' ' + (p.name || '') + ' ' + tagText(p)).toLowerCase().includes(term));
   // destaca a stat de severidade ativa
   document.querySelectorAll('.stats-row .stat').forEach(s => {
     const v = s.dataset.sev === 'info' ? 'info' : Number(s.dataset.sev);
@@ -200,6 +201,11 @@ function applyFilter() {
   }
   renderList(list, !!term || sevFilter !== null, document.getElementById('groupBy').value);
 }
+
+// tags como texto "tag:valor" (o mesmo formato do chip e do filtro)
+function tagLabel(tg) { return tg.value ? tg.tag + ':' + tg.value : tg.tag; }
+function tagText(p) { return (p.tags || []).map(tagLabel).join(' '); }
+const MAX_TAG_CHIPS = 3;
 
 function buildInstInfo(instStatus) {
   if (!instStatus) return '';
@@ -266,6 +272,7 @@ function renderList(problems, filtered, groupBy) {
         ${p.host ? `<div class="host">${instBadge}${esc(p.host)}</div>` : (instBadge ? `<div class="host">${instBadge}</div>` : '')}
         <div class="name" title="${esc(p.name)}">${esc(p.name)}</div>
         ${p.opdata ? `<div class="opdata" title="${esc(p.opdata)}">${esc(p.opdata)}</div>` : ''}
+        ${(p.tags || []).length ? `<div class="tagrow">${p.tags.slice(0, MAX_TAG_CHIPS).map(tg => `<button class="tagchip" data-tag="${esc(tagLabel(tg))}" title="${esc(t('tag_filter', lang))}">${esc(tagLabel(tg))}</button>`).join('')}${p.tags.length > MAX_TAG_CHIPS ? `<span class="tagmore" title="${esc(p.tags.slice(MAX_TAG_CHIPS).map(tagLabel).join(', '))}">+${p.tags.length - MAX_TAG_CHIPS}</span>` : ''}</div>` : ''}
         ${p.acknowledged && p.ackmsg ? `<div class="ackinfo" title="${esc(p.ackmsg)}">&#x2713; ${esc(p.ackmsg)}</div>` : ''}
       </div>
       <div class="meta">${tags}${snzBtn}${ackBtn}<span class="age">${ago(p.clock * 1000)}</span></div>
@@ -328,6 +335,16 @@ function renderList(problems, filtered, groupBy) {
     });
   });
 
+  // chip de tag: filtra a lista por ela (preenche o filtro de texto, que casa as tags tambem)
+  el.querySelectorAll('.tagchip').forEach(chip => {
+    chip.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const fb = document.getElementById('filterBox');
+      fb.value = chip.dataset.tag;
+      applyFilter(); saveView();
+    });
+  });
+
   // snooze: 💤 abre presets (15m/1h/4h); se ja snoozado, o botao "acorda"
   el.querySelectorAll('.snzbtn').forEach(btn => {
     btn.addEventListener('click', (e) => {
@@ -371,11 +388,11 @@ function renderList(problems, filtered, groupBy) {
   };
   el.querySelectorAll('.row[data-ev]').forEach(row => {
     row.addEventListener('click', (e) => {
-      if (e.target.closest('.ackbtn') || e.target.closest('.ackmsg') || e.target.closest('.snzbtn')) return;
+      if (e.target.closest('.ackbtn') || e.target.closest('.ackmsg') || e.target.closest('.snzbtn') || e.target.closest('.tagchip')) return;
       openRow(row);
     });
     row.addEventListener('keydown', (e) => {
-      if (e.target.closest('.ackbtn') || e.target.closest('.ackmsg') || e.target.closest('.snzbtn')) return;
+      if (e.target.closest('.ackbtn') || e.target.closest('.ackmsg') || e.target.closest('.snzbtn') || e.target.closest('.tagchip')) return;
       if (e.key === 'Enter' || e.key === ' ') { if (e.key === ' ') e.preventDefault(); openRow(row); }
     });
   });

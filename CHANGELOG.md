@@ -25,6 +25,10 @@ in `manifest.json`.
   down, no network - it warns once with a notification that stays on screen
   and its own sound, and again when the instance is back. A Zabbix the
   extension cannot see used to look exactly like a quiet one.
+- Tags: each row shows up to 3 of the problem's tags as chips (click one to
+  filter the list by it; the text filter also matches tags), and each instance
+  accepts a tag filter pushed to the server like the host groups:
+  `service:web` (contains), `env=prod` (equals), `team` (tag exists).
 - "Newest" sort option in the popup, next to "Age" (oldest first) (GitHub #28).
 - Problems that appeared since the popup was last opened get a "NEW" tag in the
   list, independent of the "unseen" badge option (GitHub #28).
