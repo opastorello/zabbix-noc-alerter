@@ -51,6 +51,8 @@ const DEFAULT_CONFIG = {
   showRowActions: true,   // botoes SNZ/ACK em cada linha (desligar: quem nao tem permissao de ACK)
   showSevCounts: true,    // barra de contadores por severidade (que tambem filtra)
   compactRows: false,     // uma linha por problema
+  notifOpdata: true,      // valor do trigger no texto da notificacao
+  notifButtons: true,     // botoes ACK / Adiar na notificacao (desligar: quem nao tem permissao de ACK)
   lang: ''                // '' = auto (idioma do navegador); 'pt' | 'en' | 'es'
 };
 
@@ -1082,18 +1084,20 @@ function notify(p, base, fixedId, extraCount) {
   // fixedId (ex.: 'zbx-nag') reusa a MESMA notificacao a cada ciclo do re-alarme,
   // atualizando no lugar em vez de empilhar uma nova notificacao a cada toque.
   const id = fixedId || ('zbx-' + p.eventid + '-' + Date.now());
+  const op = config.notifOpdata !== false ? String(p.opdata || '').trim() : '';
   const ctx = 'Zabbix NOC Alerter - ' + t('n_click', lang)
     + (extraCount > 0 ? ' - ' + t('and_more', lang).replace('{n}', extraCount) : '');
   chrome.notifications.create(id, {
     type: 'basic',
     iconUrl: 'icons/icon128.png',
     title: '[' + t('nsev' + sev, lang).toUpperCase() + '] ' + (p.host || 'Zabbix'),
-    message: (p.name || '(...)') + (String(p.opdata || '').trim() ? ' - ' + String(p.opdata).trim() : ''),
+    message: (p.name || '(...)') + (op ? ' - ' + op : ''),
     contextMessage: ctx,
     priority: 2,
     requireInteraction: sev >= 4,
-    // agir sem abrir o popup: o motivo de existir da extensao e reagir rapido
-    buttons: [{ title: t('n_btn_ack', lang) }, { title: t('n_btn_snooze', lang) }]
+    // agir sem abrir o popup: o motivo de existir da extensao e reagir rapido. Desligavel na
+    // Exibicao: um usuario sem permissao de ACK so veria um botao que falha.
+    ...(config.notifButtons !== false ? { buttons: [{ title: t('n_btn_ack', lang) }, { title: t('n_btn_snooze', lang) }] } : {})
   });
   // base junto do instId: o id pode passar a apontar pra OUTRO Zabbix (instancia removida/renumerada)
   saveNotifUrl(id, problemUrl(base, p), { eventid: String(p.eventid), instId: p._instId || p.instId || '', base: normalizeUrl(base) });

@@ -48,8 +48,9 @@ in `manifest.json`.
   shown. Each part of the row can be turned off: the ACK message, the
   SNZ/ACK buttons (for users without ACK permission; a snoozed problem
   still shows a "SNZ 10m" badge) and the per-severity counters, plus a
-  compact mode with one line per problem. The defaults keep the popup
-  looking exactly as before.
+  compact mode with one line per problem. Notifications can leave out the
+  trigger value or the ACK/Snooze buttons. The defaults keep the popup and
+  the notifications looking exactly as before.
 - "Newest" sort option in the popup, next to "Age" (oldest first) (GitHub #28).
 - Problems that appeared since the popup was last opened get a "NEW" tag in the
   list, independent of the "unseen" badge option (GitHub #28).

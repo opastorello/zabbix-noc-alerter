@@ -1250,6 +1250,24 @@ function P(ev, sev, x = {}) { return { eventid: String(ev), objectid: 't' + ev, 
     eq(popEl('.stats-row').style.display, '', 'contadores ligados (padrao): a barra aparece');
   } catch (e) { assert(false, 'applyDisplay: ' + e.message); }
 
+  console.log('\n--- Exibicao: conteudo da notificacao (opdata e botoes desligaveis) ---');
+  eq([DEF.notifOpdata, DEF.notifButtons], [true, true], 'padroes = notificacao de antes (com opdata e botoes)');
+  scenario.byBase = { 'https://zNotif': [] };
+  await setConfig({ instances: [{ id: 'instN', label: 'N', url: 'https://zNotif', token: 'tN', enabled: true }], minSeverity: 0, repeatAlarm: false, muted: false, mutedUntil: 0, notificationsEnabled: true, soundEnabled: true, blindSpotAlert: false });
+  await poll();
+  scenario.byBase['https://zNotif'] = [P(480, 5, { name: 'CPU alta', opdata: 'CPU 97 %' })];
+  await poll();
+  let notifN = captured.notifs.find(n => /^zbx-480-/.test(n.id));
+  eq(notifN && notifN.message, 'CPU alta - CPU 97 %', '(pre) padrao: opdata no texto da notificacao');
+  assert(!!notifN && Array.isArray(notifN.buttons) && notifN.buttons.length === 2, '(pre) padrao: botoes ACK e Adiar');
+  await setConfig({ notifOpdata: false, notifButtons: false });
+  scenario.byBase['https://zNotif'].push(P(481, 5, { name: 'Disco cheio', opdata: 'free 2 %' }));
+  await poll();
+  notifN = captured.notifs.find(n => /^zbx-481-/.test(n.id));
+  eq(notifN && notifN.message, 'Disco cheio', 'opdata da notificacao desligado: so o nome do problema');
+  assert(!!notifN && !(notifN.buttons && notifN.buttons.length), 'botoes da notificacao desligados: sem ACK/Adiar (usuario sem permissao nao ve botao que so falharia)');
+  await setConfig({ notifOpdata: true, notifButtons: true });
+
   console.log('\n--- popup: aspas no nome/host/tag nao quebram os atributos da linha ---');
   // esc() do popup nao escapava aspas (o das Opcoes ja escapava): title="${esc(nome)}" com aspas no
   // nome fechava o atributo no meio e o resto do texto virava atributos soltos na tag.
