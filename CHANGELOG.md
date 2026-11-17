@@ -50,6 +50,11 @@ in `manifest.json`.
   lost session showed only "(session)" in green while the list kept the last
   known problems; with several, "2/3 OK" never said which one failed. The
   status bar now turns amber/red and names the instance and the reason.
+- No more burst of alerts for problems that already existed when an instance
+  answers for the first time: adding an instance before logging into that
+  Zabbix, or starting the browser before the network is up, used to treat
+  every open problem there as new once it finally responded. The silent
+  baseline is now per instance and only taken on a successful poll.
 
 ### Changed
 - Zabbix 8.0 LTS is supported: validated live (browser session, API token,

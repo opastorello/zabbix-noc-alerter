@@ -892,6 +892,25 @@ function P(ev, sev, x = {}) { return { eventid: String(ev), objectid: 't' + ev, 
   eq(p971.unseen, true, '971 (chegou depois do popup abrir) fica marcado unseen, mesmo com badgeUnseen desligado');
 
   // =================================================================
+  // Bug hunt da rodada v0.6 (combinacoes das mudancas da rodada). Testes que FALHAM no codigo atual.
+  scenario.rejectBodyAuth = false; scenario.rejectHeaderAuth = false; scenario.problemGetError = null;
+  scenario.meetTabs = []; scenario.workPeriod = ''; scenario.login = null; scenario.requireSid = false;
+
+  console.log('\n--- Bug hunt (pre-existente, fora da rodada): baseline gasto num poll que falhou ---');
+  scenario.cookie = null;
+  scenario.byBase = { 'https://zNew': [P(397, 5, { name: 'ja existia antes de logar' }), P(398, 4)] };
+  await setConfig({ instances: [{ id: 'instNew', label: 'NOVO', url: 'https://zNew', authType: 'session', enabled: true }], minSeverity: 0, repeatAlarm: false, muted: false, notificationsEnabled: true, soundEnabled: true, blindSpotAlert: false });
+  eq(BG.getState().instStatus.instNew.state, 'no-session', '(pre) instancia recem-adicionada, ainda sem sessao no Zabbix dela');
+  scenario.cookie = zbxCookie('sess-inst-nova'); // usuario loga no Zabbix novo
+  await poll();
+  eq(BG.getState().instStatus.instNew.state, 'ok', '(pre) logou: instancia ok');
+  assert(!captured.sounds.length && !captured.notifs.length, 'problemas que ja existiam antes do 1o poll COM SUCESSO nao disparam alerta de novo (baseline nao pode ser gasto num poll que falhou)');
+  scenario.byBase['https://zNew'].push(P(399, 5, { name: 'novo de verdade' }));
+  await poll();
+  assert(captured.sounds.length === 1 && captured.notifs.some(n => n.message === 'novo de verdade'), 'depois desse baseline, um problema novo de verdade nessa instancia alerta normalmente');
+  scenario.cookie = null;
+
+  // =================================================================
   console.log('\n' + '='.repeat(44));
   console.log('RESULTADO: ' + pass + ' passaram, ' + fail + ' falharam');
   console.log('='.repeat(44));

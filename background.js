@@ -170,7 +170,8 @@ let state = {
   instBackoff: {},        // instId -> {fails, nextAt} backoff exponencial apos erro de rede/API (reseta no sucesso)
   lastActive: {},         // instId -> ultima lista de "active" com sucesso (reusada enquanto em backoff)
   downSince: {},          // instId -> desde quando a instancia nao esta 'ok' (ponto cego)
-  blindAlerted: {}        // instId -> ja avisou o ponto cego desta queda (avisa 1x e de novo so ao voltar)
+  blindAlerted: {},       // instId -> ja avisou o ponto cego desta queda (avisa 1x e de novo so ao voltar)
+  instBaselined: {}       // instId -> ja teve um poll COM SUCESSO desde o ultimo (re)baseline
 };
 let _pollInFlight = false, _pollAgain = false; // mutex + coalescing do poll
 
@@ -912,12 +913,15 @@ async function _pollInstance(inst, _retried) {
   // (badgeUnseen). Se usasse p.clock, um problema antigo detectado tarde (poll atrasado, instancia
   // em backoff) nunca contaria como "nao visto" mesmo que o usuario nunca tenha visto ele de fato.
   // Ja conhecido -> mantem o timestamp original. Novo E ja tinha baseline -> "agora" (fresh de
-  // verdade). Novo NA PROPRIA baseline (1o poll, ainda sem state.initialized) -> 0, pra nao inundar
-  // o badge com tudo que ja existia quando a extensao ligou.
+  // verdade). Novo NA PROPRIA baseline -> 0, pra nao inundar o badge com tudo que ja existia.
+  // Baseline e POR INSTANCIA e so conta depois de um poll COM SUCESSO dela: um 1o poll que falhou
+  // (instancia adicionada antes de logar, navegador abrindo antes da rede subir) nao pode gastar o
+  // baseline, senao quando ela finalmente responde tudo que ja existia la dispara como "novo".
+  const baselined = state.initialized && !!state.instBaselined[inst.id];
   const currentMap = new Map(active.map(p => {
     const key = inst.id + ':' + p.eventid;
     const prev = state.known.get(key);
-    const firstSeenTs = prev ? (prev.firstSeenTs || 0) : (state.initialized ? Date.now() : 0);
+    const firstSeenTs = prev ? (prev.firstSeenTs || 0) : (baselined ? Date.now() : 0);
     return [key, {
       name: p.name, host: p.host || '', hostid: p.hostid || '', objectid: p.objectid || '',
       severity: Number(p.severity), instId: inst.id, instLabel: inst.label, firstSeenTs
@@ -926,7 +930,7 @@ async function _pollInstance(inst, _retried) {
 
   // novos e resolvidos
   let fresh = [], resolved = [];
-  if (state.initialized) {
+  if (baselined) {
     // novos e resolvidos por instancia (chave composta instId:eventid). O alerta/badge/snooze/nag
     // sao decididos no agregador (_pollZabbixOnce) sobre o conjunto de TODAS as instancias.
     fresh = active.filter(p => !state.known.has(inst.id + ':' + p.eventid));
@@ -940,6 +944,7 @@ async function _pollInstance(inst, _retried) {
     }
   }
 
+  state.instBaselined[inst.id] = true; // este poll deu certo: o proximo ja compara com ele
   const instStatus = { state: 'ok', via, label: inst.label, total: active.length, degraded: hostsDegraded };
   return { active, fresh, resolved, currentMap, instStatus };
 }
@@ -1215,6 +1220,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     Object.keys(state.authModes).forEach(id => { if (!validIds.has(id)) delete state.authModes[id]; });
     Object.keys(state.groupCache).forEach(id => { if (!validIds.has(id)) delete state.groupCache[id]; });
     Object.keys(state.lastActive).forEach(id => { if (!validIds.has(id)) delete state.lastActive[id]; });
+    Object.keys(state.instBaselined).forEach(id => { if (!validIds.has(id)) delete state.instBaselined[id]; });
     state.loginTokens = {};     // credenciais podem ter mudado -> re-login no proximo poll
     state.instBackoff = {};     // config mudou (url/credencial/etc.) -> vale tentar de novo ja no proximo poll
     state.workPeriodCache = {}; // re-le o work_period apos mudanca de config (instancias/opcao)
@@ -1223,6 +1229,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     // um problema que apareceu bem naquela hora ser adotado como "ja conhecido" e nunca alertar.
     if (filterSignature(config) !== oldFilterSig) {
       state.initialized = false;
+      state.instBaselined = {}; // cada instancia re-baseia no proximo poll COM SUCESSO dela
       state.lastAlarmTs = 0;
     }
     scheduleAlarm();
