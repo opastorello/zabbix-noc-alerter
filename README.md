@@ -34,16 +34,18 @@ right in your browser, while you work on anything else.
 - 🔑 **Three auth modes per instance:** browser session (no credentials), API token, or username and password (the extension logs in and renews the session by itself).
 - 🔊 **Per-severity sound** with volume and a test button.
 - 🔁 **Re-alarm** (sound and notification) while a problem is unacknowledged, until you ack it or mute.
+- 🔕 **Timed mute:** 15 min, 1 h, 4 h, until the end of your shift or until you unmute; a timed mute turns itself back on and tells you.
+- 👁️ **Blind-spot alert:** warns when the extension stops seeing an instance (session lost, invalid token, Zabbix down, no network), because a Zabbix you cannot see looks exactly like a quiet one.
 - 📅 **Alert only during working hours:** reads the Working time from your Zabbix server and stays silent outside it (list and badge keep updating).
 - 🎦 **Meeting mode (Google Meet):** silences sounds and/or notifications while you are in a Meet call.
 - 🛠️ **Maintenance-aware:** problems in a maintenance window get an MNT tag and stay silent (or hide them).
-- 🔍 **Live filter** in the popup by host or problem name, or by clicking a severity; **sort** and **group by host or instance**.
+- 🔍 **Live filter** in the popup by host, problem name or tag, or by clicking a severity or a tag chip; **sort** (severity, age, newest, host) and **group by host or instance**; problems that appeared since you last looked are tagged NEW.
 - 💤 **Snooze a single problem** (15 min to 4 h) without the global mute; it re-alerts when the snooze ends.
-- 🖥️ **Shows the host** (and the instance, when you watch more than one) in the list and in the notification.
-- ✅ **Acknowledge from the popup** (with a message), and see any existing ack.
+- 🖥️ **Shows the host** (and the instance, when you watch more than one), the trigger's **operational data** ("CPU 97%") and its **tags**, in the list and in the notification.
+- ✅ **Acknowledge or snooze straight from the notification** (ACK / Snooze 15 min buttons), or from the popup with a message; see any existing ack.
 - 🟢 **Resolved notification** when a problem recovers.
 - 🖱️ **Click a problem** to open the exact event in Zabbix.
-- 🔎 **Filters:** minimum severity, max age, **host groups**, exclude by text, hide suppressed/acked/in-maintenance; optional "unseen" badge.
+- 🔎 **Filters:** minimum severity, max age, **host groups**, **tags**, exclude by text, hide suppressed/acked/in-maintenance; optional "unseen" badge.
 - 💾 **Backup:** export and import settings as JSON (instance tokens and passwords are never exported).
 - 🌐 **Languages:** English, Português, Español, picked automatically from your browser.
 - 🔒 **Nothing hardcoded:** the Zabbix URLs (and credentials) live only in the options.

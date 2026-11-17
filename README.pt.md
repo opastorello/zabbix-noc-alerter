@@ -34,16 +34,18 @@ notificação, direto no navegador, enquanto você trabalha em qualquer outra co
 - 🔑 **Três modos de autenticação por instância:** sessão do navegador (sem credencial), token de API, ou usuário e senha (a extensão faz o login e renova a sessão sozinha).
 - 🔊 **Som por severidade** com volume e botão de teste.
 - 🔁 **Re-alarme** (som e notificação) enquanto houver problema não reconhecido, até dar ack ou mudo.
+- 🔕 **Mudo com tempo:** 15 min, 1 h, 4 h, até o fim do turno ou até você reativar; o mudo com tempo volta sozinho e avisa.
+- 👁️ **Alerta de ponto cego:** avisa quando a extensão para de enxergar uma instância (sessão caída, token inválido, Zabbix fora do ar, sem rede), porque um Zabbix que você não enxerga parece exatamente um Zabbix quieto.
 - 📅 **Alertar só no horário de trabalho:** lê o Working time do seu servidor Zabbix e fica em silêncio fora dele (lista e badge continuam atualizando).
 - 🎦 **Modo reunião (Google Meet):** silencia sons e/ou notificações enquanto você está numa call do Meet.
 - 🛠️ **Ciente de manutenção:** problemas em janela de manutenção ganham a tag MNT e ficam silenciosos (ou você esconde).
-- 🔍 **Filtro ao vivo** no popup por host ou nome do problema, ou clicando numa severidade; **ordenar** e **agrupar por host ou instância**.
+- 🔍 **Filtro ao vivo** no popup por host, nome do problema ou tag, ou clicando numa severidade ou num chip de tag; **ordenar** (severidade, idade, mais recente, host) e **agrupar por host ou instância**; problemas que surgiram desde a última olhada ganham a tag NOVO.
 - 💤 **Adiar (snooze) um problema só** (15 min a 4 h) sem o mudo global; ao acabar, ele re-alerta.
-- 🖥️ **Mostra o host** (e a instância, quando você monitora mais de uma) na lista e na notificação.
-- ✅ **Ack direto do popup** (com mensagem) e mostra o ack existente.
+- 🖥️ **Mostra o host** (e a instância, quando você monitora mais de uma), os **dados operacionais** do trigger ("CPU 97%") e as **tags**, na lista e na notificação.
+- ✅ **Ack ou adiar direto da notificação** (botões ACK / Adiar 15 min), ou pelo popup com mensagem; mostra o ack existente.
 - 🟢 **Notificação de resolvido** quando um problema recupera.
 - 🖱️ **Clique no problema** abre o evento exato no Zabbix.
-- 🔎 **Filtros:** severidade mínima, idade máxima, **host groups**, excluir por texto, esconder suprimidos/ackados/em manutenção; badge "não vistos" opcional.
+- 🔎 **Filtros:** severidade mínima, idade máxima, **host groups**, **tags**, excluir por texto, esconder suprimidos/ackados/em manutenção; badge "não vistos" opcional.
 - 💾 **Backup:** exportar e importar configurações em JSON (tokens e senhas das instâncias nunca são exportados).
 - 🌐 **Idiomas:** English, Português, Español, escolhido automaticamente pelo navegador.
 - 🔒 **Nada hardcoded:** as URLs do Zabbix (e as credenciais) ficam só nas opções.
