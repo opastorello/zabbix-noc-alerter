@@ -138,6 +138,7 @@ function createInstanceCard(inst, idx) {
   const card = document.createElement('div');
   card.className = 'inst-card' + (inst.enabled ? '' : ' disabled');
   card.dataset.idx = idx;
+  card.dataset.instId = inst.id || ''; // id ESTAVEL: remover a #1 nao pode fazer a #2 virar outra instancia
   const hasLabel = (inst.label || '').trim();
   // configs antigas (sem authType): token preenchido = token, vazio = sessao
   const authType = inst.authType || ((inst.token || '').trim() ? 'token' : 'session');
@@ -226,10 +227,18 @@ function addInstance() {
   const current = container.querySelectorAll('.inst-card').length;
   if (current >= MAX_INSTANCES) return;
   const idx = current;
-  const inst = { id: 'inst' + (Date.now() % 100000), label: '', url: '', authType: 'session', token: '', username: '', password: '', enabled: true };
+  const inst = { id: newInstId(), label: '', url: '', authType: 'session', token: '', username: '', password: '', enabled: true };
   container.appendChild(createInstanceCard(inst, idx)); // novo card ja vem expandido
   // atualizar visibilidade do botao
   document.getElementById('addInstanceBtn').style.display = (idx + 1) >= MAX_INSTANCES ? 'none' : '';
+}
+
+// id unico pra uma instancia nova (os existentes sao preservados; nao renumera por posicao)
+function newInstId() {
+  const used = new Set([...document.querySelectorAll('#instancesContainer .inst-card')].map(c => c.dataset.instId));
+  let id;
+  do { id = 'inst' + Math.floor(Math.random() * 1e9).toString(36); } while (used.has(id));
+  return id;
 }
 
 function removeInstance(card) {
@@ -279,7 +288,9 @@ function collectInstances() {
   const instances = [];
   cards.forEach((card, idx) => {
     instances.push({
-      id: 'inst' + (idx + 1),
+      // id estavel (antes era 'inst' + posicao: remover a #1 renumerava as outras, e snooze, estado
+      // conhecido e o alvo dos botoes das notificacoes passavam a apontar pra outro Zabbix)
+      id: card.dataset.instId || ('inst' + (idx + 1)),
       label: card.querySelector('.inst-label-input').value.trim() || ('Zabbix ' + (idx + 1)),
       url: card.querySelector('.inst-url').value.trim(),
       authType: card.querySelector('.inst-auth').value,

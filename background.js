@@ -1031,7 +1031,8 @@ function notify(p, base, fixedId, extraCount) {
     // agir sem abrir o popup: o motivo de existir da extensao e reagir rapido
     buttons: [{ title: t('n_btn_ack', lang) }, { title: t('n_btn_snooze', lang) }]
   });
-  saveNotifUrl(id, problemUrl(base, p), { eventid: String(p.eventid), instId: p._instId || p.instId || '' });
+  // base junto do instId: o id pode passar a apontar pra OUTRO Zabbix (instancia removida/renumerada)
+  saveNotifUrl(id, problemUrl(base, p), { eventid: String(p.eventid), instId: p._instId || p.instId || '', base: normalizeUrl(base) });
 }
 
 function notifyResolved(p, base, extraCount) {
@@ -1087,16 +1088,31 @@ chrome.notifications.onClicked.addListener((id) => {
 // (o mesmo snooze individual do popup). Falha no ACK vira um aviso com o erro do Zabbix, e a
 // notificacao original fica, em vez de sumir calada.
 const NOTIF_SNOOZE_MS = 15 * 60 * 1000;
+
+// Instancia dona do problema de uma notificacao: mesmo id E mesma URL; se o id agora aponta pra outro
+// Zabbix (instancia removida e as outras renumeradas), acha pela URL. Eventids sao sequenciais em
+// todo servidor, entao mandar o ACK pelo id "errado" acertaria o evento de mesmo numero de OUTRO Zabbix.
+function resolveNotifInst(tg) {
+  const list = config.instances || [];
+  const byId = list.find(i => i.id === tg.instId);
+  if (!tg.base) return byId || null; // alvo gravado antes de existir o campo base
+  if (byId && normalizeUrl(byId.url) === tg.base) return byId;
+  return list.find(i => normalizeUrl(i.url) === tg.base) || null;
+}
+
 if (chrome.notifications.onButtonClicked) chrome.notifications.onButtonClicked.addListener((id, idx) => {
   takeNotifTarget(id).then(async (tg) => {
     if (!tg || !tg.eventid || !tg.instId) { chrome.notifications.clear(id); return; }
+    const lang = resolveLang(config.lang);
+    const inst = resolveNotifInst(tg);
+    if (!inst) { notifyInfo('zbx-ackerr-' + tg.eventid, t('n_ack_fail', lang), t('n_inst_gone', lang)); return; }
     if (idx === 0) {
-      const r = await ackEventCore(tg.instId, tg.eventid, '');
+      const r = await ackEventCore(inst.id, tg.eventid, '');
       if (r.ok) { chrome.notifications.clear(id); dropNotifUrl(id); pollZabbix(); }
-      else notifyInfo('zbx-ackerr-' + tg.eventid, t('n_ack_fail', resolveLang(config.lang)), String(r.error || ''));
+      else notifyInfo('zbx-ackerr-' + tg.eventid, t('n_ack_fail', lang), String(r.error || ''));
       return;
     }
-    state.snoozes[tg.instId + ':' + tg.eventid] = Date.now() + NOTIF_SNOOZE_MS;
+    state.snoozes[inst.id + ':' + tg.eventid] = Date.now() + NOTIF_SNOOZE_MS;
     saveSnoozes();
     chrome.notifications.clear(id);
     dropNotifUrl(id);

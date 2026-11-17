@@ -931,6 +931,29 @@ function P(ev, sev, x = {}) { return { eventid: String(ev), objectid: 't' + ev, 
   chrome.storage.session.get = sessGetOrig;
   eq((scenario.ackCalls || []).map(c => c.params.eventids), [['390']], 'SW dormiu: ACK pelo botao de QUALQUER notificacao do lote (nao so a ultima) chega no Zabbix, em vez de so fechar a notificacao');
 
+  console.log('\n--- Bug hunt v0.6: botao ACK depois de remover uma instancia do meio ---');
+  scenario.byBase = { 'https://zR1': [], 'https://zR2': [], 'https://zR3': [P(395, 4)] }; // eventid 395 tambem existe no R3
+  const R = (id, label, url) => ({ id, label, url, token: 't-' + label, enabled: true });
+  await setConfig({ instances: [R('inst1', 'R1', 'https://zR1'), R('inst2', 'R2', 'https://zR2'), R('inst3', 'R3', 'https://zR3')], minSeverity: 0, repeatAlarm: false, muted: false, notificationsEnabled: true });
+  await poll();
+  scenario.byBase['https://zR2'].push(P(395, 5, { name: 'problema do R2' }));
+  await poll();
+  const nR2 = captured.notifs.find(n => n.message === 'problema do R2');
+  // Opcoes: remove o R1; collectInstances renumera por posicao (R2 vira inst1, R3 vira inst2)
+  await setConfig({ instances: [R('inst1', 'R2', 'https://zR2'), R('inst2', 'R3', 'https://zR3')] });
+  scenario.ackCalls = [];
+  notifButtonListener(nR2.id, 0); await tick(80);
+  assert(!(scenario.ackCalls || []).some(c => c.base === 'https://zR3'), 'ACK de uma notificacao antiga do R2 nao vai parar no R3 (outro Zabbix) depois das instancias serem renumeradas');
+  eq((scenario.ackCalls || []).map(c => [c.base, c.params.eventids]), [['https://zR2', ['395']]], 'e vai pro R2 certo (achado pela URL gravada na notificacao)');
+  // instancia removida de vez: avisa em vez de mandar o ACK pra qualquer lugar
+  scenario.byBase['https://zR3'].push(P(396, 5, { name: 'problema do R3' }));
+  await poll();
+  const nR3 = captured.notifs.find(n => n.message === 'problema do R3');
+  await setConfig({ instances: [R('inst1', 'R2', 'https://zR2')] });
+  scenario.ackCalls = []; resetCaptures();
+  notifButtonListener(nR3.id, 0); await tick(80);
+  assert(!(scenario.ackCalls || []).length && captured.notifs.some(n => /^zbx-ackerr-/.test(n.id)), 'instancia removida: nenhum ACK enviado, e um aviso explica');
+
   // =================================================================
   console.log('\n' + '='.repeat(44));
   console.log('RESULTADO: ' + pass + ' passaram, ' + fail + ' falharam');

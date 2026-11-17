@@ -59,6 +59,11 @@ in `manifest.json`.
   extension to sleep now works for every notification of a batch, not only
   the last one: concurrent writes of the notification targets overwrote each
   other.
+- Removing an instance in Options no longer renumbers the others. Instance ids
+  used to follow the card position, so after removing #1 a snoozed problem,
+  the known-problems state or an "ACK" button on an older notification could
+  point at a different Zabbix. Ids are now stable, and the notification buttons
+  also check the instance URL before acting.
 
 ### Changed
 - Zabbix 8.0 LTS is supported: validated live (browser session, API token,
