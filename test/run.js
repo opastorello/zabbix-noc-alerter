@@ -595,6 +595,15 @@ function P(ev, sev, x = {}) { return { eventid: String(ev), objectid: 't' + ev, 
   await setConfig({ volume: 0.3 });
   ageDown('instBl', 10); await poll();
   eq(blindNotifs().length, 0, 'salvar opcao sem relacao (volume) com a instancia ainda cega nao repete o aviso');
+  // varias instancias cegas no mesmo poll: um aviso por instancia, mas UM som so
+  await setConfig({ instances: [
+    { id: 'instBA', label: 'A', url: 'https://zBlA', authType: 'session', enabled: true },
+    { id: 'instBB', label: 'B', url: 'https://zBlB', authType: 'session', enabled: true },
+    { id: 'instBC', label: 'C', url: 'https://zBlC', authType: 'session', enabled: true },
+  ], blindSpotAlert: true, muted: false });
+  await poll(); ['instBA', 'instBB', 'instBC'].forEach(id => ageDown(id, 5)); await poll();
+  eq(blindNotifs().length, 3, '3 instancias cegas: 3 notificacoes (uma por instancia)');
+  eq(captured.sounds.filter(s => s.preset === 'flatline').length, 1, '...mas um som so no poll, nao 3 flatlines empilhados');
   // desligado nas opcoes = nunca
   await setConfig({ instances: [{ id: 'instBl', label: 'PRD', url: 'https://zBlindOff', authType: 'session', enabled: true }], blindSpotAlert: false });
   await poll(); ageDown('instBl', 30); await poll();

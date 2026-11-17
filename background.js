@@ -736,6 +736,7 @@ function checkBlindSpots(instances, ctx, now) {
   const lang = resolveLang(config.lang);
   const limitMs = Math.max(1, Number(config.blindSpotMinutes) || 2) * 60000;
   const ids = new Set(instances.map(i => i.id));
+  let soundPlayed = false; // varias instancias cegas no mesmo poll = um som so (como nos alertas de problema)
   Object.keys(state.downSince).forEach(id => { if (!ids.has(id)) delete state.downSince[id]; });
   // instancia desligada/removida: a notificacao fixa de "cego" dela nao pode ficar na tela pra sempre
   Object.keys(state.blindAlerted).forEach(id => { if (!ids.has(id)) { delete state.blindAlerted[id]; chrome.notifications.clear('zbx-blind-' + id); } });
@@ -761,7 +762,7 @@ function checkBlindSpots(instances, ctx, now) {
     if (!config.blindSpotAlert || state.blindAlerted[inst.id] || downMs < limitMs) continue;
     const g = alertGate('blind', ctx);
     if (!g.sound && !g.notif) continue; // silenciado agora: tenta de novo no proximo poll
-    if (g.sound) playSound(BLIND_SOUND, config.volume);
+    if (g.sound && !soundPlayed) { playSound(BLIND_SOUND, config.volume); soundPlayed = true; }
     if (g.notif) notifyBlind(inst, s, downMs);
     state.blindAlerted[inst.id] = true;
   }
