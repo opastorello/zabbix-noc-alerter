@@ -16,6 +16,10 @@ in `manifest.json`.
 - The trigger's operational data ("CPU 97%", "free 4%") is shown on each row
   of the popup and in the notification text, so you can triage on the value
   instead of only the trigger name.
+- Act straight from the notification: every problem notification (new,
+  snooze ended, re-alarm) has "ACK" and "Snooze 15 min" buttons, so you can
+  react without opening the popup. A failed ACK shows the Zabbix error in a
+  notification instead of failing silently.
 - "Newest" sort option in the popup, next to "Age" (oldest first) (GitHub #28).
 - Problems that appeared since the popup was last opened get a "NEW" tag in the
   list, independent of the "unseen" badge option (GitHub #28).

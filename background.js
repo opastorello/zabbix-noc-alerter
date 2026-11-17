@@ -877,12 +877,14 @@ function soundForSeverity(sev) {
 // =====================================================
 // Espelha notifId->url em chrome.storage.session (in-memory, limpo ao fechar o navegador;
 // sobrevive ao sleep do SW). TTL + poda evitam vazamento e mapa infinito.
-function saveNotifUrl(id, url) {
-  state.notifUrls[id] = url; // fast-path em memoria
+// extra = {eventid, instId}: alvo dos botoes da notificacao (ACK / adiar). Sem extra = so a URL.
+function saveNotifUrl(id, url, extra) {
+  const entry = { url, ...(extra || {}) };
+  state.notifUrls[id] = entry; // fast-path em memoria
   try {
     chrome.storage.session.get(['notifUrls'], (r) => {
       const map = r.notifUrls || {};
-      map[id] = { url, ts: Date.now() };
+      map[id] = { ...entry, ts: Date.now() };
       const ids = Object.keys(map);
       if (ids.length > NOTIF_MAX) {
         ids.sort((a, b) => (map[a].ts || 0) - (map[b].ts || 0));
@@ -893,12 +895,13 @@ function saveNotifUrl(id, url) {
   } catch (e) {}
 }
 
-async function takeNotifUrl(id) {
+// {url, eventid?, instId?} da notificacao (memoria primeiro; storage.session se o SW dormiu)
+async function takeNotifTarget(id) {
   if (state.notifUrls[id]) return state.notifUrls[id];
   try {
     const r = await chrome.storage.session.get(['notifUrls']);
     const e = r.notifUrls && r.notifUrls[id];
-    if (e && (Date.now() - (e.ts || 0)) < NOTIF_TTL_MS) return e.url;
+    if (e && (Date.now() - (e.ts || 0)) < NOTIF_TTL_MS) return e;
   } catch (e) {}
   return null;
 }
@@ -932,9 +935,11 @@ function notify(p, base, fixedId, extraCount) {
     message: (p.name || '(...)') + (String(p.opdata || '').trim() ? ' - ' + String(p.opdata).trim() : ''),
     contextMessage: ctx,
     priority: 2,
-    requireInteraction: sev >= 4
+    requireInteraction: sev >= 4,
+    // agir sem abrir o popup: o motivo de existir da extensao e reagir rapido
+    buttons: [{ title: t('n_btn_ack', lang) }, { title: t('n_btn_snooze', lang) }]
   });
-  saveNotifUrl(id, problemUrl(base, p));
+  saveNotifUrl(id, problemUrl(base, p), { eventid: String(p.eventid), instId: p._instId || p.instId || '' });
 }
 
 function notifyResolved(p, base, extraCount) {
@@ -963,12 +968,56 @@ function notifyInfo(id, title, message) {
 }
 
 chrome.notifications.onClicked.addListener((id) => {
-  takeNotifUrl(id).then((url) => {
-    if (url) chrome.tabs.create({ url });
+  takeNotifTarget(id).then((tg) => {
+    if (tg && tg.url) chrome.tabs.create({ url: tg.url });
     chrome.notifications.clear(id);
     dropNotifUrl(id);
   });
 });
+
+// Botoes da notificacao: 0 = ACK (mesmo caminho do popup, com a mensagem padrao), 1 = adiar 15 min
+// (o mesmo snooze individual do popup). Falha no ACK vira um aviso com o erro do Zabbix, e a
+// notificacao original fica, em vez de sumir calada.
+const NOTIF_SNOOZE_MS = 15 * 60 * 1000;
+if (chrome.notifications.onButtonClicked) chrome.notifications.onButtonClicked.addListener((id, idx) => {
+  takeNotifTarget(id).then(async (tg) => {
+    if (!tg || !tg.eventid || !tg.instId) { chrome.notifications.clear(id); return; }
+    if (idx === 0) {
+      const r = await ackEventCore(tg.instId, tg.eventid, '');
+      if (r.ok) { chrome.notifications.clear(id); dropNotifUrl(id); pollZabbix(); }
+      else notifyInfo('zbx-ackerr-' + tg.eventid, t('n_ack_fail', resolveLang(config.lang)), String(r.error || ''));
+      return;
+    }
+    state.snoozes[tg.instId + ':' + tg.eventid] = Date.now() + NOTIF_SNOOZE_MS;
+    saveSnoozes();
+    chrome.notifications.clear(id);
+    dropNotifUrl(id);
+    pollZabbix();
+  });
+});
+
+// ACK de um evento - popup e botao da notificacao usam este mesmo caminho. Retorna {ok, error}.
+async function ackEventCore(instId, eventid, message) {
+  const lang = resolveLang(config.lang);
+  const inst = (config.instances || []).find(i => i.id === instId);
+  if (!inst) return { ok: false, error: 'Instance not found' };
+  try {
+    const base = normalizeUrl(inst.url);
+    const { token } = await getInstAuth(inst);
+    if (!token) return { ok: false, error: t('e_nocred', lang) };
+    const r = await apiCall(base, 'event.acknowledge', {
+      eventids: [String(eventid)], action: 6, message: message || t('ack_msg', lang)
+    }, token, inst.id);
+    console.log('[zbx] ack OK', eventid, 'inst:', inst.label, r);
+    return { ok: true };
+  } catch (e) {
+    const emsg = String((e && e.message) || e || t('failed', lang));
+    // sessionid do user.login expirado: invalida o cache pro proximo ack/poll re-logar
+    if (instAuthType(inst) === 'password' && AUTH_ERR_RE.test(emsg)) delete state.loginTokens[inst.id];
+    console.error('[zbx] ack FALHOU', eventid, emsg);
+    return { ok: false, error: emsg };
+  }
+}
 
 // =====================================================
 // Offscreen audio (MV3: service worker nao toca som)
@@ -1141,27 +1190,10 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   }
 
   if (msg.action === 'ackEvent') {
-    (async () => {
-      const inst = (config.instances || []).find(i => i.id === msg.instId);
-      if (!inst) { sendResponse({ ok: false, error: 'Instance not found' }); return; }
-      try {
-        const base = normalizeUrl(inst.url);
-        const { token } = await getInstAuth(inst);
-        if (!token) { sendResponse({ ok: false, error: t('e_nocred', resolveLang(config.lang)) }); return; }
-        const r = await apiCall(base, 'event.acknowledge', {
-          eventids: [String(msg.eventid)], action: 6, message: msg.message || t('ack_msg', resolveLang(config.lang))
-        }, token, inst.id);
-        console.log('[zbx] ack OK', msg.eventid, 'inst:', inst.label, r);
-        sendResponse({ ok: true });
-        pollZabbix();
-      } catch (e) {
-        const emsg = String((e && e.message) || e || t('failed', resolveLang(config.lang)));
-        // sessionid do user.login expirado: invalida o cache pro proximo ack/poll re-logar
-        if (instAuthType(inst) === 'password' && AUTH_ERR_RE.test(emsg)) delete state.loginTokens[inst.id];
-        console.error('[zbx] ack FALHOU', msg.eventid, e);
-        sendResponse({ ok: false, error: emsg });
-      }
-    })();
+    ackEventCore(msg.instId, msg.eventid, msg.message).then((r) => {
+      sendResponse(r);
+      if (r.ok) pollZabbix();
+    });
     return true;
   }
 

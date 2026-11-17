@@ -18,6 +18,7 @@ function eq(a, b, label) { assert(JSON.stringify(a) === JSON.stringify(b), label
 // ---------- capturas de efeitos (som/notificacao/badge) ----------
 let captured = { sounds: [], notifs: [], cleared: [], badge: null };
 function resetCaptures() { captured = { sounds: [], notifs: [], cleared: [], badge: null }; }
+let notifButtonListener = null, notifClickListener = null, openedTabs = [];
 
 // ---------- cenario do Zabbix (controlado por teste) ----------
 // login: {user, pass, sid} habilita o user.login; requireSid: problem.get exige o sid atual
@@ -41,22 +42,23 @@ const chrome = {
   },
   action: { setBadgeText: ({ text }) => { captured.badge = text; }, setBadgeBackgroundColor: () => {} },
   notifications: {
-    create: (id, opts) => { captured.notifs.push({ id, title: opts && opts.title, message: opts && opts.message, contextMessage: opts && opts.contextMessage }); },
+    create: (id, opts) => { captured.notifs.push({ id, title: opts && opts.title, message: opts && opts.message, contextMessage: opts && opts.contextMessage, buttons: opts && opts.buttons }); },
     clear: (id) => { captured.cleared.push(id); },
-    onClicked: { addListener: () => {} }, onClosed: { addListener: () => {} },
+    onClicked: { addListener: (fn) => { notifClickListener = fn; } }, onClosed: { addListener: () => {} },
+    onButtonClicked: { addListener: (fn) => { notifButtonListener = fn; } },
   },
   runtime: {
     getManifest: () => ({ version: '0.0.0' }),
     onMessage: { addListener: (fn) => { messageListener = fn; } },
     onStartup: { addListener: () => {} }, onInstalled: { addListener: () => {} },
-    sendMessage: () => {}, lastError: null,
+    sendMessage: () => Promise.resolve(), lastError: null, // MV3: sem callback devolve Promise (o .catch do background depende disso)
   },
   alarms: { create: () => {}, clear: () => {}, onAlarm: { addListener: () => {} }, get: (_n, cb) => cb && cb(null) },
   cookies: {
     get: async ({ name }) => (name === 'zbx_session' && scenario.cookie) ? { name, value: scenario.cookie } : null,
     getAll: async () => scenario.cookie ? [{ name: 'zbx_session', value: scenario.cookie }] : [],
   },
-  tabs: { query: async ({ url }) => scenario.meetTabs.filter(u => String(url) === 'https://meet.google.com/*' && u.startsWith('https://meet.google.com/')).map(u => ({ url: u })) },
+  tabs: { create: (o) => { openedTabs.push(o); }, query: async ({ url }) => scenario.meetTabs.filter(u => String(url) === 'https://meet.google.com/*' && u.startsWith('https://meet.google.com/')).map(u => ({ url: u })) },
   offscreen: { hasDocument: async () => true, createDocument: async () => {}, closeDocument: async () => {} },
 };
 
@@ -92,7 +94,11 @@ async function fetchMock(url, opts) {
     const ids = ((body.params && body.params.triggerids) || []).filter(id => !scenario.hiddenTriggers.includes(id));
     result = ids.map(id => ({ triggerid: id, status: scenario.disabledTriggers.includes(id) ? '1' : '0', hosts: [{ hostid: 'h' + id, name: 'host-' + id, status: scenario.disabledHosts.includes('h' + id) ? '1' : '0' }] }));
   }
-  else if (body.method === 'event.acknowledge') result = { eventids: body.params.eventids };
+  else if (body.method === 'event.acknowledge') {
+    scenario.ackCalls = scenario.ackCalls || []; scenario.ackCalls.push({ base, params: body.params });
+    if (scenario.ackError) return errResp(scenario.ackError, '');
+    result = { eventids: body.params.eventids };
+  }
   else if (body.method === 'settings.get') {
     if (scenario.workPeriod === null) return { status: 200, json: async () => ({ jsonrpc: '2.0', error: { message: 'No permissions', data: 'settings.get negado' }, id: 1 }) };
     result = { work_period: scenario.workPeriod || '' };
@@ -447,6 +453,43 @@ function P(ev, sev, x = {}) { return { eventid: String(ev), objectid: 't' + ev, 
   await poll();
   assert(captured.notifs.some(n => n.message === 'Disk full - free 2%'), 'notificacao de problema novo mostra o opdata junto do nome');
   assert(captured.notifs.some(n => n.message === 'Sem valor'), 'sem opdata a notificacao fica so com o nome');
+
+  console.log('\n--- Integracao: ACK e adiar direto pelos botoes da notificacao ---');
+  const tick = (ms = 30) => new Promise(r => setTimeout(r, ms));
+  scenario.byBase = { 'https://zBtn': [P(340, 4)], 'https://zBtn2': [] };
+  await setConfig({ instances: [
+    { id: 'instB1', label: 'PRD', url: 'https://zBtn', token: 't1', enabled: true },
+    { id: 'instB2', label: 'HML', url: 'https://zBtn2', token: 't2', enabled: true },
+  ], minSeverity: 0, repeatAlarm: false, muted: false, notificationsEnabled: true, soundEnabled: true });
+  await poll();
+  scenario.byBase['https://zBtn2'].push(P(341, 5, { name: 'vai levar ack' }), P(342, 4, { name: 'vai ser adiado' }));
+  await poll();
+  const nAck = captured.notifs.find(n => n.message === 'vai levar ack');
+  const nSnz = captured.notifs.find(n => n.message === 'vai ser adiado');
+  assert(nAck && Array.isArray(nAck.buttons) && nAck.buttons.length === 2, 'notificacao de problema novo tem 2 botoes (ACK, adiar)');
+  assert(typeof notifButtonListener === 'function', 'background registra onButtonClicked');
+  scenario.ackCalls = [];
+  notifButtonListener(nAck.id, 0); await tick(80);
+  eq(scenario.ackCalls.map(c => [c.base, c.params.eventids]), [['https://zBtn2', ['341']]], 'botao 0 = ACK do evento certo, na instancia certa');
+  assert(scenario.ackCalls[0] && scenario.ackCalls[0].params.action === 6 && !!scenario.ackCalls[0].params.message, 'ACK pela notificacao manda ack + mensagem padrao');
+  assert(captured.cleared.includes(nAck.id), 'ACK ok fecha a notificacao');
+  notifButtonListener(nSnz.id, 1); await tick(80);
+  const snzUntil = BG.getState().snoozes['instB2:342'] || 0;
+  assert(Math.abs(snzUntil - (Date.now() + 15 * 60000)) < 5000, 'botao 1 = adia o problema por 15 min (chave instId:eventid)');
+  assert(captured.cleared.includes(nSnz.id), 'adiar fecha a notificacao');
+  // ACK que falha avisa, em vez de sumir calado
+  scenario.byBase['https://zBtn2'].push(P(343, 5, { name: 'ack vai falhar' }));
+  await poll();
+  const nFail = captured.notifs.find(n => n.message === 'ack vai falhar');
+  scenario.ackError = 'No permissions to referred object or it does not exist!';
+  resetCaptures();
+  notifButtonListener(nFail.id, 0); await tick(80);
+  assert(captured.notifs.some(n => /No permissions/.test(n.message || '')), 'ACK que falha mostra o erro do Zabbix numa notificacao');
+  scenario.ackError = null;
+  // clique no corpo continua abrindo o evento
+  openedTabs = [];
+  notifClickListener(nFail.id); await tick(30);
+  assert(openedTabs.some(o => /eventid=343/.test(o.url)), 'clique no corpo da notificacao continua abrindo o evento');
 
   console.log('\n--- Integracao: mudo com tempo desliga sozinho e avisa ---');
   scenario.byBase = { 'https://zMute': [P(320, 5)], 'https://z2': [] };
