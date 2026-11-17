@@ -151,8 +151,11 @@ function render(st) {
     bar.classList.add('err'); bar.textContent = t('err', lang) + ': ' + (st.error || '?');
     setCounts({}); fr.style.display = 'none'; note.style.display = 'none'; allProblems = []; renderList([]); return;
   }
-  // ok - multi-instance status
-  bar.classList.add('ok');
+  // ok - multi-instance status. O agregado e sempre 'ok', entao a falha POR instancia (sem sessao,
+  // erro, backoff) tem que aparecer aqui: senao a lista mostra o ultimo estado conhecido como se
+  // estivesse tudo bem e um Zabbix que a extensao parou de enxergar parece um Zabbix quieto.
+  const failing = Object.values(st.instStatus || {}).filter(s => s && s.label && s.state && s.state !== 'ok');
+  bar.classList.add(!failing.length ? 'ok' : (failing.some(e => e.state === 'error') ? 'err' : 'warn'));
   const instInfo = buildInstInfo(st.instStatus);
   // "Alertar so no horario de trabalho" ligado mas settings.get comecou a falhar: o fail-open
   // continua alertando normalmente, mas o usuario precisa saber que a opcao parou de filtrar
@@ -209,11 +212,16 @@ function buildInstInfo(instStatus) {
     : '';
   if (entries.length <= 1) {
     const e = entries[0];
-    return e ? `(${t('via_' + (e.via || 'session'), lang)})${degradedNote}` : '';
+    if (!e) return '';
+    const fail = e.state === 'no-session' ? ' - ' + t('no_session', lang)
+      : (e.state === 'error' ? ' - ' + t('err', lang) + ': ' + (e.error || '?') : '');
+    return `(${t('via_' + (e.via || 'session'), lang)})${fail}${degradedNote}`;
   }
-  // multi: mostra quantas OK
+  // multi: quantas OK + QUAL caiu e por que (antes "2/3 OK" deixava a falha anonima)
   const ok = entries.filter(e => e.state === 'ok').length;
-  return `(${ok}/${entries.length} OK)${degradedNote}`;
+  const failed = entries.filter(e => e.state && e.state !== 'ok')
+    .map(e => e.label + ': ' + (e.state === 'no-session' ? t('inst_nosess', lang) : String(e.error || t('err', lang)).slice(0, 60)));
+  return `(${ok}/${entries.length} OK)${failed.length ? ' - ' + failed.join('; ') : ''}${degradedNote}`;
 }
 
 // Estado vazio acionavel (sem URL / sem sessao): botao primario que abre as Opcoes.

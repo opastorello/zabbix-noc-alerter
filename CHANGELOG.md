@@ -37,6 +37,10 @@ in `manifest.json`.
   password mode), so a file can never point your token at another server. The
   0.3.0 notes already promised tokens were "never overwritten on import"; that
   only held for the legacy single-instance token until now.
+- The popup now says when an instance stopped answering. With one instance a
+  lost session showed only "(session)" in green while the list kept the last
+  known problems; with several, "2/3 OK" never said which one failed. The
+  status bar now turns amber/red and names the instance and the reason.
 
 ### Internal
 - Every silencing rule (mute, working hours, meeting mode, snooze, maintenance,
