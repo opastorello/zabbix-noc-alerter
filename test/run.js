@@ -989,6 +989,10 @@ function P(ev, sev, x = {}) { return { eventid: String(ev), objectid: 't' + ev, 
   scenario.ackCalls = []; resetCaptures();
   notifButtonListener(nR3.id, 0); await tick(80);
   assert(!(scenario.ackCalls || []).length && captured.notifs.some(n => /^zbx-ackerr-/.test(n.id)), 'instancia removida: nenhum ACK enviado, e um aviso explica');
+  resetCaptures();
+  notifButtonListener(nR3.id, 1); await tick(80); // "Adiar 15 min" na mesma notificacao orfa
+  const snzWarn = captured.notifs.find(n => /^zbx-ackerr-/.test(n.id));
+  assert(snzWarn && !/ACK/.test(snzWarn.title), 'adiar numa instancia removida avisa sem dizer "ACK falhou" (o botao era o de adiar)');
 
   console.log('\n--- Bug hunt v0.6: notificacao de ponto cego nao fica velha apos corrigir a credencial ---');
   scenario.badToken = 'tok-velho';

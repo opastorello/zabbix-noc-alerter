@@ -1159,7 +1159,7 @@ if (chrome.notifications.onButtonClicked) chrome.notifications.onButtonClicked.a
     if (!tg || !tg.eventid || !tg.instId) { chrome.notifications.clear(id); return; }
     const lang = resolveLang(config.lang);
     const inst = resolveNotifInst(tg);
-    if (!inst) { notifyInfo('zbx-ackerr-' + tg.eventid, t('n_ack_fail', lang), t('n_inst_gone', lang)); return; }
+    if (!inst) { notifyInfo('zbx-ackerr-' + tg.eventid, idx === 0 ? t('n_ack_fail', lang) : t('n_snz_fail', lang), t('n_inst_gone', lang)); return; }
     if (idx === 0) {
       const r = await ackEventCore(inst.id, tg.eventid, '');
       if (r.ok) { chrome.notifications.clear(id); dropNotifUrl(id); pollZabbix(); }
