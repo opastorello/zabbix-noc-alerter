@@ -1288,6 +1288,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     // idioma nao mexe nisso (senao re-avisaria a cada save com uma instancia fora).
     const connSig = (i) => JSON.stringify([normalizeUrl(i.url), instAuthType(i), i.token || '', i.username || '', i.password || '', !!i.enabled]);
     const oldConn = new Map((config.instances || []).map(i => [i.id, connSig(i)]));
+    const oldUrl = new Map((config.instances || []).map(i => [i.id, normalizeUrl(i.url)]));
     config = { ...DEFAULT_CONFIG, ...config, ...(msg.config || {}) };
     config = migrateConfig(config);
     saveConfig();
@@ -1297,6 +1298,12 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       if (oldConn.get(i.id) !== connSig(i)) {
         if (state.blindAlerted[i.id]) chrome.notifications.clear('zbx-blind-' + i.id);
         delete state.downSince[i.id]; delete state.blindAlerted[i.id]; delete state.authModes[i.id];
+      }
+      // a URL agora e OUTRO Zabbix: a ultima lista conhecida (reusada pelo carry-forward enquanto o
+      // novo nao responde) e o baseline eram do servidor antigo. Sem isto o popup mostrava e o nag
+      // re-alarmava problemas do antigo com link/ACK apontando pro novo (eventids iguais = outro evento).
+      if (oldUrl.has(i.id) && oldUrl.get(i.id) !== normalizeUrl(i.url)) {
+        delete state.lastActive[i.id]; delete state.instBaselined[i.id];
       }
     });
     // Limpar instStatus de instancias removidas

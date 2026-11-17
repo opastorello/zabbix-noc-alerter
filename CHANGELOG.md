@@ -78,6 +78,9 @@ in `manifest.json`.
   the known-problems state or an "ACK" button on an older notification could
   point at a different Zabbix. Ids are now stable, and the notification buttons
   also check the instance URL before acting.
+- Pointing an instance at a different Zabbix URL no longer keeps showing (and
+  re-alarming) the old server's problems under it while the new one is not
+  readable yet; the new server's existing problems are adopted silently.
 
 ### Changed
 - Zabbix 8.0 LTS is supported: validated live (browser session, API token,

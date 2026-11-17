@@ -1112,6 +1112,29 @@ function P(ev, sev, x = {}) { return { eventid: String(ev), objectid: 't' + ev, 
   await poll();
   assert(captured.notifs.some(n => n.message === 'adiado e depois mudo'), 'snooze que venceu durante o mudo com tempo (re-alarme off): o problema, ainda aberto e sem ack, alerta no fim do mudo em vez de sumir calado');
 
+  console.log('\n--- Bug hunt v0.6 (2a passada): URL trocada no lugar, Zabbix novo ainda ilegivel ---');
+  // _carryForward reusa state.lastActive[instId], que nao e limpo quando a URL da instancia muda: a
+  // lista do Zabbix ANTIGO aparece (e re-alarma) como se fosse do novo, com links/ACK pro novo.
+  scenario.cookie = null;
+  scenario.byBase = { 'https://zOldSrv': [P(460, 5, { name: 'desastre do Zabbix antigo' })], 'https://zNewSrv': [] };
+  const instMv = { id: 'instMv', label: 'PRD', url: 'https://zOldSrv', authType: 'token', token: 'tOld', enabled: true };
+  await setConfig({ instances: [instMv], minSeverity: 0, repeatAlarm: true, repeatInterval: 5, nagNotify: true, muted: false, mutedUntil: 0, notificationsEnabled: true, soundEnabled: true, blindSpotAlert: false });
+  await poll();
+  await setConfig({ instances: [{ ...instMv, url: 'https://zNewSrv', authType: 'session', token: '' }] }); // migracao pro Zabbix novo, sem sessao ainda
+  eq(BG.getState().instStatus.instMv.state, 'no-session', '(pre) instancia agora aponta pro Zabbix novo, ainda sem sessao');
+  assert(!probByEvent('instMv', '460'), 'URL da instancia trocada: a lista do Zabbix ANTIGO nao continua no popup como se fosse do novo');
+  BG.getState().lastAlarmTs = 0; await poll();
+  assert(!captured.notifs.some(n => n.message === 'desastre do Zabbix antigo'), 'e o nag nao re-alarma um problema do Zabbix antigo apontando (link/ACK) pro novo');
+  scenario.byBase['https://zNewSrv'] = [P(461, 5, { name: 'ja existia no Zabbix novo' })];
+  scenario.cookie = zbxCookie('sess-novo'); BG.getState().instBackoff = {};
+  resetCaptures(); await poll();
+  assert(!!probByEvent('instMv', '461'), 'Zabbix novo respondeu: o que ja existia la aparece na lista');
+  // (o re-alarme esta LIGADO neste teste: o lembrete zbx-nag de um problema sem ack e esperado; o que
+  // nao pode e ele chegar como alerta de problema NOVO, id zbx-<eventid>-...)
+  eq(captured.notifs.filter(n => /^zbx-461-/.test(n.id)).length, 0, 'e entra calado como baseline novo, nao como alerta de problema novo (sem enxurrada)');
+  eq(captured.notifs.filter(n => n.id !== 'zbx-nag').length, 0, 'nenhuma notificacao alem do lembrete do re-alarme');
+  scenario.cookie = null;
+
   // =================================================================
   console.log('\n' + '='.repeat(44));
   console.log('RESULTADO: ' + pass + ' passaram, ' + fail + ' falharam');
