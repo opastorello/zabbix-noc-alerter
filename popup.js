@@ -230,8 +230,9 @@ function applyDisplay() {
   const sr = document.querySelector('.stats-row');
   if (sr) sr.style.display = disp.showSevCounts ? '' : 'none';
   // a barra e tambem o filtro por severidade: escondida, um filtro salvo nao teria como ser
-  // desfeito e a lista ficaria filtrada sem o usuario ver por que. Limpa.
-  if (!disp.showSevCounts && sevFilter !== null) sevFilter = null;
+  // desfeito e a lista ficaria filtrada sem o usuario ver por que. Limpa (e salva: religar a barra
+  // depois nao pode ressuscitar o filtro antigo).
+  if (!disp.showSevCounts && sevFilter !== null) { sevFilter = null; saveView(); }
 }
 
 // tags na ordem de exibicao: as da prioridade primeiro (na ordem da lista), o resto na ordem do Zabbix

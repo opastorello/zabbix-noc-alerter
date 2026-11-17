@@ -135,6 +135,7 @@ BG.setPlaySpy((preset, vol) => { captured.sounds.push({ preset, vol }); return P
 // innerHTML e o teste le o HTML montado. Nao valida layout/CSS - isso continua sendo ao vivo.
 const popupSrc = fs.readFileSync(path.join(ROOT, 'popup.js'), 'utf8');
 const popEls = {};
+const popSaved = []; // chrome.storage.local.set do popup (visao salva)
 function fakeEl() { return { innerHTML: '', textContent: '', value: '', style: {}, dataset: {}, className: '', classList: { add() {}, remove() {}, toggle() {}, contains: () => false }, addEventListener() {}, querySelectorAll: () => [], querySelector: () => null, setAttribute() {}, getAttribute: () => null }; }
 const popEl = (id) => popEls[id] || (popEls[id] = fakeEl());
 const popSandbox = {
@@ -142,7 +143,7 @@ const popSandbox = {
   document: { addEventListener() {}, getElementById: popEl, querySelector: popEl, querySelectorAll: () => [], documentElement: {},
     // esc() usa div.textContent -> innerHTML; o navegador serializa texto escapando so & < > (e nbsp)
     createElement: () => { let txt = ''; return { set textContent(v) { txt = String(v); }, get innerHTML() { return txt.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/ /g, '&nbsp;'); } }; } },
-  chrome: { runtime: { sendMessage() {}, getManifest: () => ({ version: '0.0.0' }), openOptionsPage() {} }, storage: { local: { get() {}, set() {} } } },
+  chrome: { runtime: { sendMessage() {}, getManifest: () => ({ version: '0.0.0' }), openOptionsPage() {} }, storage: { local: { get() {}, set(o) { popSaved.push(JSON.parse(JSON.stringify(o))); } } } },
 };
 vm.createContext(popSandbox);
 vm.runInContext(i18nSrc, popSandbox, { filename: 'i18n.js' });
@@ -1246,6 +1247,8 @@ function P(ev, sev, x = {}) { return { eventid: String(ev), objectid: 't' + ev, 
     popSandbox.__pop.setDisp({ showSevCounts: false }); popSandbox.applyDisplay();
     eq(popEl('.stats-row').style.display, 'none', 'contadores desligados: a barra de severidade some');
     eq(popSandbox.__pop.getSevFilter(), null, '...e um filtro de severidade salvo e limpo (sem a barra nao teria como tirar, e a lista ficaria filtrada as cegas)');
+    const lastView = popSaved.length ? popSaved[popSaved.length - 1].popupView : null;
+    eq(lastView ? lastView.sevFilter : 'visao nao salva', null, '...limpo tambem na visao salva: religar a barra depois nao ressuscita o filtro antigo');
     popSandbox.__pop.setDisp({}); popSandbox.applyDisplay();
     eq(popEl('.stats-row').style.display, '', 'contadores ligados (padrao): a barra aparece');
   } catch (e) { assert(false, 'applyDisplay: ' + e.message); }
