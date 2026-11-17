@@ -60,6 +60,8 @@ in `manifest.json`.
   full`) no longer breaks the popup row: the quotes cut the hover text short
   and leaked the rest into the row's markup, and a tag chip with quotes
   filtered by the wrong value.
+- A long ACK error shown in the popup is cut at 80 characters before it is
+  escaped, so it no longer ends in a broken entity like `&quo`.
 - Problems from a disabled host no longer stay in the list; Zabbix does not
   close them on its own and already hides them in its own UI (GitHub #27).
 - A problem that only stops being shown (its host or trigger got disabled, it
