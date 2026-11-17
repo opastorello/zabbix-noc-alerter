@@ -959,26 +959,43 @@ function soundForSeverity(sev) {
 // Espelha notifId->url em chrome.storage.session (in-memory, limpo ao fechar o navegador;
 // sobrevive ao sleep do SW). TTL + poda evitam vazamento e mapa infinito.
 // extra = {eventid, instId}: alvo dos botoes da notificacao (ACK / adiar). Sem extra = so a URL.
+// storage.session e ler-alterar-escrever ASSINCRONO: varias notificacoes no mesmo poll liam o
+// MESMO mapa antigo e so a ultima sobrevivia - depois do service worker dormir, os botoes (ACK /
+// adiar) e o clique das outras paravam de funcionar em silencio. Toda escrita passa por esta fila,
+// uma de cada vez; o timeout garante que uma chamada que nunca responde nao trave a fila pra sempre.
+let _notifQueue = Promise.resolve();
+function updateNotifMap(mutate) {
+  _notifQueue = _notifQueue.then(() => new Promise((resolve) => {
+    const guard = setTimeout(resolve, 3000);
+    const done = () => { clearTimeout(guard); resolve(); };
+    try {
+      chrome.storage.session.get(['notifUrls'], (r) => {
+        const map = (r && r.notifUrls) || {};
+        mutate(map);
+        try { chrome.storage.session.set({ notifUrls: map }, done); } catch (e) { done(); }
+      });
+    } catch (e) { done(); }
+  }));
+  return _notifQueue;
+}
+
 function saveNotifUrl(id, url, extra) {
   const entry = { url, ...(extra || {}) };
   state.notifUrls[id] = entry; // fast-path em memoria
-  try {
-    chrome.storage.session.get(['notifUrls'], (r) => {
-      const map = r.notifUrls || {};
-      map[id] = { ...entry, ts: Date.now() };
-      const ids = Object.keys(map);
-      if (ids.length > NOTIF_MAX) {
-        ids.sort((a, b) => (map[a].ts || 0) - (map[b].ts || 0));
-        ids.slice(0, ids.length - NOTIF_MAX).forEach(old => delete map[old]);
-      }
-      chrome.storage.session.set({ notifUrls: map });
-    });
-  } catch (e) {}
+  updateNotifMap((map) => {
+    map[id] = { ...entry, ts: Date.now() };
+    const ids = Object.keys(map);
+    if (ids.length > NOTIF_MAX) {
+      ids.sort((a, b) => (map[a].ts || 0) - (map[b].ts || 0));
+      ids.slice(0, ids.length - NOTIF_MAX).forEach(old => delete map[old]);
+    }
+  });
 }
 
 // {url, eventid?, instId?} da notificacao (memoria primeiro; storage.session se o SW dormiu)
 async function takeNotifTarget(id) {
   if (state.notifUrls[id]) return state.notifUrls[id];
+  await _notifQueue; // uma gravacao ainda na fila tem que entrar antes da leitura
   try {
     const r = await chrome.storage.session.get(['notifUrls']);
     const e = r.notifUrls && r.notifUrls[id];
@@ -989,13 +1006,7 @@ async function takeNotifTarget(id) {
 
 function dropNotifUrl(id) {
   delete state.notifUrls[id];
-  try {
-    chrome.storage.session.get(['notifUrls'], (r) => {
-      const map = r.notifUrls || {};
-      delete map[id];
-      chrome.storage.session.set({ notifUrls: map });
-    });
-  } catch (e) {}
+  updateNotifMap((map) => { delete map[id]; });
 }
 
 // extraCount: quantos problemas do mesmo lote ficaram de fora do teto MAX_NOTIFS_PER_POLL

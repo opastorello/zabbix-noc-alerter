@@ -55,6 +55,10 @@ in `manifest.json`.
   Zabbix, or starting the browser before the network is up, used to treat
   every open problem there as new once it finally responded. The silent
   baseline is now per instance and only taken on a successful poll.
+- Clicking a notification (or its buttons) after the browser put the
+  extension to sleep now works for every notification of a batch, not only
+  the last one: concurrent writes of the notification targets overwrote each
+  other.
 
 ### Changed
 - Zabbix 8.0 LTS is supported: validated live (browser session, API token,

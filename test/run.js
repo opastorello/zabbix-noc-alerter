@@ -910,6 +910,27 @@ function P(ev, sev, x = {}) { return { eventid: String(ev), objectid: 't' + ev, 
   assert(captured.sounds.length === 1 && captured.notifs.some(n => n.message === 'novo de verdade'), 'depois desse baseline, um problema novo de verdade nessa instancia alerta normalmente');
   scenario.cookie = null;
 
+  console.log('\n--- Bug hunt v0.6: botoes da notificacao depois do service worker dormir ---');
+  // storage.session real: o get e assincrono, entao 2 saveNotifUrl no mesmo tick leem o MESMO mapa
+  // antigo e o ultimo set ganha. Mock fiel so neste teste (restaurado no fim).
+  const sessGetOrig = chrome.storage.session.get;
+  chrome.storage.session.get = (keys, cb) => {
+    const o = {}; (Array.isArray(keys) ? keys : [keys]).forEach(k => { if (storageSession[k] !== undefined) o[k] = JSON.parse(JSON.stringify(storageSession[k])); });
+    return new Promise(res => setTimeout(() => { cb && cb(o); res(o); }, 0));
+  };
+  storageSession.notifUrls = {};
+  scenario.byBase = { 'https://zSw': [] };
+  await setConfig({ instances: [{ id: 'instSw', label: 'PRD', url: 'https://zSw', token: 't1', enabled: true }], minSeverity: 0, repeatAlarm: false, muted: false, notificationsEnabled: true, soundEnabled: true });
+  await poll();
+  scenario.byBase['https://zSw'].push(P(390, 5, { name: 'primeiro do lote' }), P(391, 4, { name: 'segundo do lote' }));
+  await poll(); await tick(30);
+  const nFirst = captured.notifs.find(n => n.message === 'primeiro do lote');
+  BG.getState().notifUrls = {}; // service worker dormiu: a memoria some, o storage.session fica
+  scenario.ackCalls = []; resetCaptures();
+  notifButtonListener(nFirst.id, 0); await tick(80);
+  chrome.storage.session.get = sessGetOrig;
+  eq((scenario.ackCalls || []).map(c => c.params.eventids), [['390']], 'SW dormiu: ACK pelo botao de QUALQUER notificacao do lote (nao so a ultima) chega no Zabbix, em vez de so fechar a notificacao');
+
   // =================================================================
   console.log('\n' + '='.repeat(44));
   console.log('RESULTADO: ' + pass + ' passaram, ' + fail + ' falharam');
