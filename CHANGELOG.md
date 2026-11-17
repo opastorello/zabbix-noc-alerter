@@ -20,6 +20,11 @@ in `manifest.json`.
   snooze ended, re-alarm) has "ACK" and "Snooze 15 min" buttons, so you can
   react without opening the popup. A failed ACK shows the Zabbix error in a
   notification instead of failing silently.
+- Blind-spot alert (on by default): when the extension cannot read an
+  instance for 2 minutes (configurable) - session lost, invalid token, Zabbix
+  down, no network - it warns once with a notification that stays on screen
+  and its own sound, and again when the instance is back. A Zabbix the
+  extension cannot see used to look exactly like a quiet one.
 - "Newest" sort option in the popup, next to "Age" (oldest first) (GitHub #28).
 - Problems that appeared since the popup was last opened get a "NEW" tag in the
   list, independent of the "unseen" badge option (GitHub #28).

@@ -11,7 +11,7 @@ const SOUNDS = [
 const MAX_INSTANCES = 8;
 const NUM = ['pollInterval', 'repeatInterval'];
 const SEL = ['minSeverity', 'soundSev5', 'soundSev4', 'soundSev3', 'soundSev2', 'soundSev1'];
-const CHK = ['soundEnabled', 'notificationsEnabled', 'notifyResolved', 'badgeUnseen', 'repeatAlarm', 'nagNotify', 'suppressDuringMeeting', 'meetSuppressNotif', 'meetSuppressSound', 'workingTimeOnly', 'ignoreAckd', 'ignoreSuppressed', 'ignoreMaintenance'];
+const CHK = ['soundEnabled', 'notificationsEnabled', 'notifyResolved', 'badgeUnseen', 'repeatAlarm', 'nagNotify', 'suppressDuringMeeting', 'meetSuppressNotif', 'meetSuppressSound', 'workingTimeOnly', 'blindSpotAlert', 'ignoreAckd', 'ignoreSuppressed', 'ignoreMaintenance'];
 
 let currentLang = 'pt';
 
@@ -309,6 +309,7 @@ function loadSettings() {
     document.getElementById('meetSubOptions').classList.toggle('hidden', !c.suppressDuringMeeting);
     document.getElementById('volume').value = c.volume ?? 0.8;
     document.getElementById('maxAgeDays').value = c.maxAgeDays ?? 0;
+    document.getElementById('blindSpotMinutes').value = c.blindSpotMinutes ?? 2;
     document.getElementById('excludePatterns').value = c.excludePatterns || '';
     updateVolLabel();
     checkWorkPeriod(); // depois de aplicar o config: valida/desativa o checkbox de working time
@@ -331,6 +332,7 @@ function saveSettings() {
   CHK.forEach(id => { cfg[id] = document.getElementById(id).checked; });
   cfg.volume = parseFloat(document.getElementById('volume').value);
   cfg.maxAgeDays = Math.max(0, parseInt(document.getElementById('maxAgeDays').value, 10) || 0);
+  cfg.blindSpotMinutes = Math.min(60, Math.max(1, parseInt(document.getElementById('blindSpotMinutes').value, 10) || 2));
   cfg.excludePatterns = document.getElementById('excludePatterns').value.trim();
   cfg.lang = document.getElementById('lang').value;
 
@@ -347,7 +349,8 @@ function resetSettings() {
     minSeverity: 4, soundEnabled: true, notificationsEnabled: true, notifyResolved: true, volume: 0.25,
     soundSev5: 'klaxon', soundSev4: 'siren', soundSev3: 'pulse', soundSev2: 'beepbeep', soundSev1: 'chime',
     ignoreAckd: false, ignoreSuppressed: true, ignoreMaintenance: true, badgeUnseen: false, muted: false, mutedUntil: 0,
-    suppressDuringMeeting: true, meetSuppressNotif: true, meetSuppressSound: true, workingTimeOnly: false, lang: currentLang
+    suppressDuringMeeting: true, meetSuppressNotif: true, meetSuppressSound: true, workingTimeOnly: false,
+    blindSpotAlert: true, blindSpotMinutes: 2, lang: currentLang
   };
   chrome.runtime.sendMessage({ action: 'setConfig', config: defaults }, () => {
     loadSettings();

@@ -117,7 +117,7 @@ const sandbox = {
 sandbox.self = sandbox;
 vm.createContext(sandbox);
 vm.runInContext(i18nSrc, sandbox, { filename: 'i18n.js' });
-const bridge = '\n;globalThis.__bg = { getConfig:()=>config, getState:()=>state, setPlaySpy:(fn)=>{ playSound = fn; } };';
+const bridge = '\n;globalThis.__bg = { getConfig:()=>config, getState:()=>state, getDefaults:()=>DEFAULT_CONFIG, setPlaySpy:(fn)=>{ playSound = fn; } };';
 vm.runInContext(bgSrc + bridge, sandbox, { filename: 'background.js' });
 const BG = sandbox.__bg;
 BG.setPlaySpy((preset, vol) => { captured.sounds.push({ preset, vol }); return Promise.resolve(); });
@@ -490,6 +490,52 @@ function P(ev, sev, x = {}) { return { eventid: String(ev), objectid: 't' + ev, 
   openedTabs = [];
   notifClickListener(nFail.id); await tick(30);
   assert(openedTabs.some(o => /eventid=343/.test(o.url)), 'clique no corpo da notificacao continua abrindo o evento');
+
+  console.log('\n--- Integracao: ponto cego (instancia que a extensao parou de enxergar) ---');
+  const blindNotifs = () => captured.notifs.filter(n => /^zbx-blind-/.test(n.id));
+  const ageDown = (id, min) => { BG.getState().downSince[id] = Date.now() - min * 60000; };
+  scenario.byBase = { 'https://zBlind': [P(350, 4)], 'https://z2': [] };
+  scenario.problemGetError = null;
+  await setConfig({ instances: [{ id: 'instBl', label: 'PRD', url: 'https://zBlind', token: 't1', enabled: true }], minSeverity: 0, repeatAlarm: false, muted: false, mutedUntil: 0, blindSpotAlert: true, blindSpotMinutes: 2, notificationsEnabled: true, soundEnabled: true, workingTimeOnly: false, suppressDuringMeeting: false });
+  await poll();
+  eq([BG.getDefaults().blindSpotAlert, BG.getDefaults().blindSpotMinutes], [true, 2], 'ponto cego vem ligado por padrao, 2 min (DEFAULT_CONFIG)');
+  scenario.problemGetError = 'Connection refused';
+  await poll();
+  eq(blindNotifs().length, 0, 'falha recem-comecada (< N min) ainda nao alerta (evita falso alarme num soluco)');
+  ageDown('instBl', 3);
+  BG.getState().instBackoff = {}; // forca tentar de novo (senao o backoff pula o poll, e tudo bem: continua "cego")
+  await poll();
+  const bn = blindNotifs();
+  eq(bn.length, 1, 'cego ha mais de N min: UMA notificacao de ponto cego');
+  assert(bn[0] && /PRD/.test(bn[0].title) && /Connection refused/.test(bn[0].message), 'notificacao diz qual instancia e o motivo');
+  assert(captured.sounds.some(s => s.preset === 'flatline'), 'ponto cego toca um som proprio (flatline), diferente de alerta de problema');
+  await poll();
+  eq(blindNotifs().length, 0, 'continua cego: nao repete a notificacao a cada poll');
+  scenario.problemGetError = null;
+  BG.getState().instBackoff = {};
+  await poll();
+  assert(captured.notifs.some(n => /^zbx-blindok-/.test(n.id)), 'instancia voltou: avisa que voltou a enxergar');
+  assert(captured.cleared.includes('zbx-blind-instBl'), 'e fecha a notificacao de ponto cego');
+  // sessao caida (modo sessao sem cookie) tambem e ponto cego
+  scenario.cookie = null;
+  await setConfig({ instances: [{ id: 'instBl', label: 'PRD', url: 'https://zBlind', authType: 'session', enabled: true }] });
+  await poll(); ageDown('instBl', 5); await poll();
+  assert(blindNotifs().some(n => /PRD/.test(n.title)), 'sessao caida por mais de N min = ponto cego');
+  // mudo segura o aviso; ao desmutar ele sai (uma vez)
+  await setConfig({ instances: [{ id: 'instBl', label: 'PRD', url: 'https://zBlindMute', authType: 'session', enabled: true }], muted: true });
+  await poll(); ageDown('instBl', 5); await poll();
+  eq(blindNotifs().length, 0, 'mudo: ponto cego nao alerta');
+  await send({ action: 'setMuted', muted: false });
+  await poll();
+  eq(blindNotifs().length, 1, 'desmutou e continua cego: o aviso que estava segurado sai agora');
+  await setConfig({ volume: 0.3 });
+  ageDown('instBl', 10); await poll();
+  eq(blindNotifs().length, 0, 'salvar opcao sem relacao (volume) com a instancia ainda cega nao repete o aviso');
+  // desligado nas opcoes = nunca
+  await setConfig({ instances: [{ id: 'instBl', label: 'PRD', url: 'https://zBlindOff', authType: 'session', enabled: true }], blindSpotAlert: false });
+  await poll(); ageDown('instBl', 30); await poll();
+  eq(blindNotifs().length, 0, 'blindSpotAlert desligado: nunca alerta');
+  await setConfig({ blindSpotAlert: true });
 
   console.log('\n--- Integracao: mudo com tempo desliga sozinho e avisa ---');
   scenario.byBase = { 'https://zMute': [P(320, 5)], 'https://z2': [] };

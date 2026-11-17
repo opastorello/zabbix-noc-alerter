@@ -38,6 +38,8 @@ const DEFAULT_CONFIG = {
   meetSuppressSound: true,     // silenciar sons durante reuniao
   meetSuppressNotif: true,     // silenciar notificacoes durante reuniao
   workingTimeOnly: false, // alertar so dentro do Working time configurado no Zabbix server
+  blindSpotAlert: true,   // avisar quando a extensao parar de enxergar uma instancia (ponto cego)
+  blindSpotMinutes: 2,    // ...depois de quantos minutos seguidos sem conseguir ler os problemas
   lang: ''                // '' = auto (idioma do navegador); 'pt' | 'en' | 'es'
 };
 
@@ -124,6 +126,7 @@ const MAX_PROBLEMS_STORE = 2000;  // teto do total (todas as instancias somadas)
                                    // a cada poll; bem acima do uso real, so pra nao escrever um payload
                                    // sem limite no pior caso (8 instancias todas perto do teto acima).
 const MAX_NOTIFS_PER_POLL = 5;    // notificacoes do navegador por ciclo (anti-flood)
+const BLIND_SOUND = 'flatline';   // som do ponto cego: distinto de qualquer alerta de problema
 const MIN_POLL_SEC = 5;           // piso do intervalo de checagem
 const BACKOFF_BASE_SEC = 30;      // 1a espera apos falha de rede/API (dobra a cada falha seguinte)
 const BACKOFF_CAP_SEC = 300;      // teto do backoff (5 min), pra nao parar de tentar de vez
@@ -146,7 +149,9 @@ let state = {
   groupCache: {},         // instId -> {key, ids} cache da resolucao de host groups (nome -> groupid)
   workPeriodCache: {},    // instId -> {period|null, ts} cache do work_period (settings.get); null = falhou
   instBackoff: {},        // instId -> {fails, nextAt} backoff exponencial apos erro de rede/API (reseta no sucesso)
-  lastActive: {}          // instId -> ultima lista de "active" com sucesso (reusada enquanto em backoff)
+  lastActive: {},         // instId -> ultima lista de "active" com sucesso (reusada enquanto em backoff)
+  downSince: {},          // instId -> desde quando a instancia nao esta 'ok' (ponto cego)
+  blindAlerted: {}        // instId -> ja avisou o ponto cego desta queda (avisa 1x e de novo so ao voltar)
 };
 let _pollInFlight = false, _pollAgain = false; // mutex + coalescing do poll
 
@@ -457,6 +462,7 @@ async function isWorkingTime(instances) {
 // ponto diferente do poll, e o bug do resolvido ignorando mute/reuniao foi o preco disso. Toda
 // regra nova de silencio entra AQUI, nao espalhada pelo _pollZabbixOnce.
 // kind: 'fresh' (novo) | 'woke' (fim de snooze) | 'nag' (re-alarme) | 'resolved' | 'info' (aviso)
+//       | 'blind' (ponto cego: mesmas regras de um alerta novo)
 // ctx: { muted, offHours, inMeeting } calculado uma vez por poll.
 // muted = bloqueio total (o chamador pula ate a contabilidade do nag); offHours/reuniao so
 // suprimem o efeito (som/notificacao), o resto do ciclo segue igual.
@@ -676,6 +682,44 @@ async function _pollZabbixOnce() {
     const shownResolved = allResolved.slice(0, MAX_NOTIFS_PER_POLL);
     const extraResolved = allResolved.length - shownResolved.length;
     shownResolved.forEach((p, i) => notifyResolved(p, baseFor(p.instId), i === shownResolved.length - 1 ? extraResolved : 0));
+  }
+
+  checkBlindSpots(instances, ctx, now);
+}
+
+// PONTO CEGO (dead man's switch): um Zabbix que a extensao nao enxerga (sessao caida, token
+// invalido, servidor fora, sem rede, em backoff) parece exatamente um Zabbix quieto - o pior modo
+// de falha de uma ferramenta de NOC. Cego por mais de blindSpotMinutes = avisa UMA vez, com som
+// proprio; quando volta, avisa que voltou. Silenciado agora (mudo, fora do horario, reuniao) = o
+// aviso fica pendente e sai no primeiro poll em que puder.
+function checkBlindSpots(instances, ctx, now) {
+  const lang = resolveLang(config.lang);
+  const limitMs = Math.max(1, Number(config.blindSpotMinutes) || 2) * 60000;
+  const ids = new Set(instances.map(i => i.id));
+  Object.keys(state.downSince).forEach(id => { if (!ids.has(id)) delete state.downSince[id]; });
+  Object.keys(state.blindAlerted).forEach(id => { if (!ids.has(id)) delete state.blindAlerted[id]; });
+  for (const inst of instances) {
+    const s = state.instStatus[inst.id];
+    if (!s) continue;
+    if (s.state === 'ok') {
+      if (state.blindAlerted[inst.id]) {
+        chrome.notifications.clear('zbx-blind-' + inst.id);
+        if (alertGate('info', ctx).notif) {
+          notifyInfo('zbx-blindok-' + inst.id, t('n_blind_ok_t', lang).replace('{inst}', inst.label), t('n_blind_ok_m', lang));
+        }
+      }
+      delete state.downSince[inst.id];
+      delete state.blindAlerted[inst.id];
+      continue;
+    }
+    if (!state.downSince[inst.id]) state.downSince[inst.id] = now;
+    const downMs = now - state.downSince[inst.id];
+    if (!config.blindSpotAlert || state.blindAlerted[inst.id] || downMs < limitMs) continue;
+    const g = alertGate('blind', ctx);
+    if (!g.sound && !g.notif) continue; // silenciado agora: tenta de novo no proximo poll
+    if (g.sound) playSound(BLIND_SOUND, config.volume);
+    if (g.notif) notifyBlind(inst, s, downMs);
+    state.blindAlerted[inst.id] = true;
   }
 }
 
@@ -959,6 +1003,22 @@ function notifyResolved(p, base, extraCount) {
   saveNotifUrl(id, problemUrl(base, p));
 }
 
+// ponto cego: fica na tela (requireInteraction) e o clique abre a instancia (pra logar de novo).
+function notifyBlind(inst, s, downMs) {
+  const lang = resolveLang(config.lang);
+  const id = 'zbx-blind-' + inst.id;
+  chrome.notifications.create(id, {
+    type: 'basic',
+    iconUrl: 'icons/icon128.png',
+    title: t('n_blind_t', lang).replace('{inst}', inst.label),
+    message: s.state === 'no-session' ? t('no_session', lang) : String(s.error || t('err', lang)),
+    contextMessage: 'Zabbix NOC Alerter - ' + t('n_blind_ctx', lang).replace('{m}', Math.max(1, Math.round(downMs / 60000))),
+    priority: 2,
+    requireInteraction: true
+  });
+  saveNotifUrl(id, normalizeUrl(inst.url));
+}
+
 // aviso informativo da propria extensao (nao e um problema do Zabbix): id fixo, sem URL.
 function notifyInfo(id, title, message) {
   chrome.notifications.create(id, {
@@ -1105,9 +1165,17 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
   if (msg.action === 'setConfig') {
     const oldFilterSig = filterSignature(config);
+    // conexao da instancia (URL, modo, credencial, ligada): se mudou, a queda anterior nao vale mais
+    // pro ponto cego - corrigiu e continua cego = avisa de novo depois de N min. Salvar volume ou
+    // idioma nao mexe nisso (senao re-avisaria a cada save com uma instancia fora).
+    const connSig = (i) => JSON.stringify([normalizeUrl(i.url), instAuthType(i), i.token || '', i.username || '', i.password || '', !!i.enabled]);
+    const oldConn = new Map((config.instances || []).map(i => [i.id, connSig(i)]));
     config = { ...DEFAULT_CONFIG, ...config, ...(msg.config || {}) };
     config = migrateConfig(config);
     saveConfig();
+    (config.instances || []).forEach(i => {
+      if (oldConn.get(i.id) !== connSig(i)) { delete state.downSince[i.id]; delete state.blindAlerted[i.id]; }
+    });
     // Limpar instStatus de instancias removidas
     const validIds = new Set((config.instances || []).map(i => i.id));
     Object.keys(state.instStatus).forEach(id => { if (!validIds.has(id)) delete state.instStatus[id]; });
