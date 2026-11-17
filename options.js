@@ -322,7 +322,13 @@ function loadSettings() {
 
     // Global settings
     NUM.forEach(id => { const el = document.getElementById(id); if (c[id] != null) el.value = c[id]; });
-    SEL.forEach(id => { const el = document.getElementById(id); if (c[id] != null) el.value = String(c[id]); });
+    SEL.forEach(id => {
+      const el = document.getElementById(id);
+      if (c[id] != null) el.value = String(c[id]);
+      // valor que nao existe na lista (arquivo importado editado a mao, versao futura): o <select> ficaria
+      // em branco e o proximo Salvar gravaria lixo (showTags '' -> 0 = esconde todas as tags). Cai no padrao.
+      if (el.selectedIndex < 0) el.value = (el.querySelector('option[selected]') || el.options[0]).value;
+    });
     CHK.forEach(id => { const el = document.getElementById(id); el.checked = !!c[id]; });
     document.getElementById('meetSubOptions').classList.toggle('hidden', !c.suppressDuringMeeting);
     document.getElementById('volume').value = c.volume ?? 0.8;
