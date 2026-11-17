@@ -42,6 +42,7 @@ notificación, en tu navegador, mientras trabajas en cualquier otra cosa.
 - 🔍 **Filtro en vivo** en el popup por host, nombre del problema o etiqueta, o haciendo clic en una severidad o en una etiqueta; **ordenar** (severidad, edad, más reciente, host) y **agrupar por host o instancia**; los problemas nuevos desde la última vez llevan la etiqueta NUEVO.
 - 💤 **Posponer (snooze) un solo problema** (15 min a 4 h) sin el silencio global; al terminar, vuelve a avisar.
 - 🖥️ **Muestra el host** (y la instancia, cuando monitoreas más de una), los **datos operacionales** del trigger ("CPU 97%") y sus **etiquetas**, en la lista y en la notificación.
+- 🎛️ **Elige qué se muestra:** cuántas etiquetas por problema, el nombre de la etiqueta (completo, abreviado o solo el valor) y cuáles van primero, las mismas opciones de la pantalla de Problemas de Zabbix; datos operacionales en su propia línea, junto al nombre u ocultos; mensaje del ACK, botones SNZ/ACK y contadores por severidad activables; modo compacto de una línea; y si la notificación lleva el valor y los botones.
 - ✅ **Ack o posponer directo desde la notificación** (botones ACK / Posponer 15 min), o desde el popup con mensaje; muestra el ack existente.
 - 🟢 **Notificación de resuelto** cuando un problema se recupera.
 - 🖱️ **Clic en el problema** abre el evento exacto en Zabbix.
