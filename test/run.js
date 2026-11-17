@@ -990,6 +990,23 @@ function P(ev, sev, x = {}) { return { eventid: String(ev), objectid: 't' + ev, 
   eq([mPast.muted, BG.getConfig().muted], [false, false], 'turno ja acabado: nao muta (nao ha o que silenciar)');
   await send({ action: 'setMuted', muted: false });
 
+  console.log('\n--- Bug hunt v0.6: import com 2 instancias na mesma URL (filtros diferentes, credenciais diferentes) ---');
+  await setConfig({ instances: [
+    { id: 'inst1', label: 'A', url: 'https://zDup', authType: 'password', username: 'team-a', password: 'pwA', enabled: false },
+    { id: 'inst2', label: 'B', url: 'https://zDup', authType: 'password', username: 'team-b', password: 'pwB', enabled: false },
+    { id: 'inst3', label: 'C', url: 'https://zDupT', authType: 'token', token: 'tokC1', enabled: false },
+    { id: 'inst4', label: 'D', url: 'https://zDupT', authType: 'token', token: 'tokC2', enabled: false },
+  ] });
+  await send({ action: 'importConfig', config: { instances: [
+    { id: 'inst1', label: 'A', url: 'https://zDup', authType: 'password', username: 'team-a', password: '', enabled: false },
+    { id: 'inst2', label: 'B', url: 'https://zDup', authType: 'password', username: 'team-b', password: '', enabled: false },
+    { id: 'inst3', label: 'C', url: 'https://zDupT', authType: 'token', token: '', enabled: false },
+    { id: 'inst4', label: 'D', url: 'https://zDupT', authType: 'token', token: '', enabled: false },
+  ] } });
+  const dupInst = BG.getConfig().instances;
+  eq(dupInst[1].password, 'pwB', 'import: 2a instancia da mesma URL (outro usuario) mantem a PROPRIA senha local');
+  eq(dupInst[3].token, 'tokC2', 'import: 2a instancia da mesma URL mantem o PROPRIO token, nao o da 1a');
+
   // =================================================================
   console.log('\n' + '='.repeat(44));
   console.log('RESULTADO: ' + pass + ' passaram, ' + fail + ' falharam');

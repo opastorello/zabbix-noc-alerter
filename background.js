@@ -86,12 +86,21 @@ function mergeImportedConfig(current, incoming) {
   delete data.mutedUntil;
   if (Array.isArray(data.instances)) {
     const local = (current && current.instances) || [];
+    // varias instancias na MESMA URL (filtros diferentes, credenciais diferentes) sao normais:
+    // prefere a local de mesmo id; senao a primeira da mesma URL (senha: tambem o mesmo usuario)
+    const sameUrl = (l, inc) => normalizeUrl(l.url) && normalizeUrl(l.url) === normalizeUrl(inc.url);
+    const sameUser = (l, inc) => (l.username || '').trim() === (inc.username || '').trim();
+    const pick = (inc, ok) => local.find(l => l.id === inc.id && ok(l)) || local.find(ok);
     data.instances = data.instances.map(inc => {
       const out = { ...inc };
-      const same = local.find(l => normalizeUrl(l.url) && normalizeUrl(l.url) === normalizeUrl(inc.url));
-      if (!same) return out;
-      if (!(out.token || '').trim() && same.token) out.token = same.token;
-      if (!out.password && same.password && (same.username || '').trim() === (out.username || '').trim()) out.password = same.password;
+      if (!(out.token || '').trim()) {
+        const src = pick(inc, l => sameUrl(l, inc) && l.token);
+        if (src) out.token = src.token;
+      }
+      if (!out.password) {
+        const src = pick(inc, l => sameUrl(l, inc) && sameUser(l, inc) && l.password);
+        if (src) out.password = src.password;
+      }
       return out;
     });
   }

@@ -48,7 +48,8 @@ in `manifest.json`.
 - Importing a settings file no longer wipes the API token or password of your
   instances (the exported file never carries them, by design). A local secret
   is kept only for an instance with the same URL (and the same username, for
-  password mode), so a file can never point your token at another server. The
+  password mode), so a file can never point your token at another server;
+  several instances on the same URL each keep their own credential. The
   0.3.0 notes already promised tokens were "never overwritten on import"; that
   only held for the legacy single-instance token until now.
 - The popup now says when an instance stopped answering. With one instance a
