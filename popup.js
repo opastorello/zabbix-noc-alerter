@@ -58,6 +58,8 @@ function load() {
     applyI18n(lang);
     renderMute();
     chrome.runtime.sendMessage({ action: 'getStatus' }, (s) => {
+      // estado do mudo vem do background ja avaliado (mudo com tempo vencido = nao mutado)
+      if (s && s.muted !== undefined) { cfg.muted = !!s.muted; cfg.mutedUntil = Number(s.mutedUntil) || 0; renderMute(); }
       render(s?.status || {});
       // status vencido (navegador recem-aberto, service worker dormiu, 1o poll falhou):
       // re-consulta sozinho em vez de esperar o usuario clicar em "checar agora".
@@ -70,19 +72,65 @@ function load() {
   });
 }
 
+// Mudo: ja mutado -> um clique reativa; senao abre os presets (15 min / 1 h / 4 h / fim do turno /
+// ate reativar). Mudo esquecido "pra sempre" e como um NOC fica mudo o fim de semana inteiro.
 function toggleMute() {
-  chrome.runtime.sendMessage({ action: 'setMuted', muted: !cfg.muted }, (r) => {
-    cfg.muted = r?.muted; renderMute();
+  const menu = document.getElementById('muteMenu');
+  if (cfg.muted) { setMuted({ muted: false }); return; }
+  if (menu.style.display !== 'none') { menu.style.display = 'none'; return; }
+  const opts = [[15, '15 min'], [60, '1 h'], [240, '4 h']];
+  const draw = (shiftTs) => {
+    menu.innerHTML = `<span class="mute-label">${esc(t('mute_for', lang))}</span>`
+      + opts.map(([m, l]) => `<button class="muteopt" data-min="${m}">${l}</button>`).join('')
+      + (shiftTs ? `<button class="muteopt" data-until="${shiftTs}">${esc(t('mute_shift', lang).replace('{t}', hhmm(shiftTs)))}</button>` : '')
+      + `<button class="muteopt" data-forever="1">${esc(t('mute_forever', lang))}</button>`
+      + `<button class="mutex" title="${esc(t('cancel', lang))}">&#x2715;</button>`;
+    menu.querySelectorAll('.muteopt').forEach(b => b.addEventListener('click', () => {
+      menu.style.display = 'none';
+      if (b.dataset.min) setMuted({ muted: true, minutes: Number(b.dataset.min) });
+      else if (b.dataset.until) setMuted({ muted: true, untilTs: Number(b.dataset.until) });
+      else setMuted({ muted: true });
+    }));
+    menu.querySelector('.mutex').addEventListener('click', () => { menu.style.display = 'none'; });
+  };
+  draw(null);
+  menu.style.display = '';
+  // "fim do turno" so aparece se o work_period do servidor for legivel e agora estiver dentro dele
+  chrome.runtime.sendMessage({ action: 'getShiftEnd' }, (r) => { if (r?.untilTs && menu.style.display !== 'none') draw(r.untilTs); });
+}
+
+function setMuted(msg) {
+  chrome.runtime.sendMessage({ action: 'setMuted', ...msg }, (r) => {
+    cfg.muted = !!r?.muted; cfg.mutedUntil = Number(r?.mutedUntil) || 0; renderMute();
   });
+}
+
+function hhmm(ts) { return new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }); }
+
+// tempo restante, curto: 42m, 1h 20m
+function fmtLeft(ms) {
+  const m = Math.max(1, Math.ceil(ms / MIN_MS));
+  return m < 60 ? m + 'm' : Math.floor(m / 60) + 'h' + (m % 60 ? ' ' + (m % 60) + 'm' : '');
 }
 
 function renderMute() {
   const b = document.getElementById('muteBtn');
   b.innerHTML = `<span aria-hidden="true">${cfg.muted ? '&#x1f507;' : '&#x1f50a;'}</span>`;
-  b.title = t('t_mute', lang);
+  b.title = cfg.muted ? t('t_unmute', lang) : t('t_mute', lang);
+  b.setAttribute('aria-label', b.title);
   b.setAttribute('aria-pressed', String(!!cfg.muted)); // estado on/off pra leitor de tela
   b.classList.toggle('muted', !!cfg.muted);
+  // silencio tem que ser explicavel: faixa dizendo ate quando, senao vira "bug, parou de alertar"
+  const info = document.getElementById('muteInfo');
+  if (!cfg.muted) { info.style.display = 'none'; return; }
+  const until = Number(cfg.mutedUntil) || 0;
+  info.textContent = '\u{1f507} ' + (until > Date.now()
+    ? t('muted_left', lang).replace('{t}', fmtLeft(until - Date.now())).replace('{h}', hhmm(until))
+    : t('muted_forever', lang));
+  info.style.display = '';
 }
+// contagem do mudo andando enquanto o popup fica aberto
+setInterval(() => { if (cfg.muted && cfg.mutedUntil) { if (Date.now() >= cfg.mutedUntil) load(); else renderMute(); } }, 30000);
 
 function setStatusText(txt) { document.getElementById('statusBar').textContent = txt; }
 

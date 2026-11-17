@@ -8,6 +8,11 @@ in `manifest.json`.
 ## [Unreleased]
 
 ### Added
+- Timed mute: the mute button now offers 15 min, 1 h, 4 h, "until end of
+  shift" (when the server's working time is readable) or "until I unmute".
+  A timed mute turns itself off and says so with a notification, and the
+  popup shows a banner with how long is left, so a forgotten mute can no
+  longer silence the NOC for a whole weekend.
 - "Newest" sort option in the popup, next to "Age" (oldest first) (GitHub #28).
 - Problems that appeared since the popup was last opened get a "NEW" tag in the
   list, independent of the "unseen" badge option (GitHub #28).

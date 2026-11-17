@@ -32,7 +32,8 @@ const DEFAULT_CONFIG = {
   ignoreMaintenance: true,// ignorar problemas em manutencao (suppression por maintenance window)
   excludePatterns: '',    // esconder problema cujo nome/host contenha qualquer um destes (virgula ou linha)
   maxAgeDays: 0,          // = "Age less than N days" do Zabbix (0 = todos; corta cronicos velhos)
-  muted: false,           // mudo temporario (toggle pelo popup)
+  muted: false,           // mudo (pelo popup); com mutedUntil > 0 desliga sozinho nessa hora
+  mutedUntil: 0,          // timestamp do fim do mudo com tempo (0 = ate reativar na mao)
   suppressDuringMeeting: true, // silenciar durante reuniao ativa do Google Meet
   meetSuppressSound: true,     // silenciar sons durante reuniao
   meetSuppressNotif: true,     // silenciar notificacoes durante reuniao
@@ -80,6 +81,7 @@ function mergeImportedConfig(current, incoming) {
   const data = { ...(incoming || {}) };
   delete data.apiToken; // legado (formato flat): import nunca sobrescreve o token do usuario
   delete data.muted;    // estado transitorio, nao e preferencia
+  delete data.mutedUntil;
   if (Array.isArray(data.instances)) {
     const local = (current && current.instances) || [];
     data.instances = data.instances.map(inc => {
@@ -371,6 +373,32 @@ function inWorkPeriod(period, date) {
   return !anyValid; // nenhum segmento parseavel = fail-open (nao suprimir por formato estranho)
 }
 
+// Fim do segmento do work_period que contem a data (pro "mudo ate o fim do turno"), ou null se a
+// data esta fora de qualquer segmento (ou o periodo e vazio/invalido: ai nao ha turno pra acabar).
+function workPeriodEnd(period, date) {
+  const s = String(period || '').trim();
+  if (!s) return null;
+  const day = ((date.getDay() + 6) % 7) + 1;
+  const mins = date.getHours() * 60 + date.getMinutes();
+  let best = null;
+  for (const seg of s.split(';')) {
+    const m = seg.trim().match(/^(\d)(?:-(\d))?,(\d{1,2}):(\d{2})-(\d{1,2}):(\d{2})$/);
+    if (!m) continue;
+    const d1 = +m[1], d2 = m[2] != null ? +m[2] : d1;
+    const t1 = +m[3] * 60 + +m[4], t2 = +m[5] * 60 + +m[6];
+    if (day >= d1 && day <= d2 && mins >= t1 && mins < t2) {
+      const end = new Date(date.getFullYear(), date.getMonth(), date.getDate(), 0, t2, 0, 0); // t2=1440 vira meia-noite
+      if (!best || end > best) best = end;
+    }
+  }
+  return best;
+}
+
+// Mudo vale agora? (mudo com tempo vencido = nao, mesmo antes do poll limpar o estado)
+function isMutedNow(now) {
+  return !!config.muted && !(Number(config.mutedUntil) > 0 && now >= Number(config.mutedUntil));
+}
+
 const WORK_PERIOD_TTL_MS = 10 * 60 * 1000; // re-le o work_period do servidor a cada 10min
 
 // Le (com cache) o work_period de UMA instancia. Retorna {period} ou {err}.
@@ -428,7 +456,7 @@ async function isWorkingTime(instances) {
 // Antes cada regra (mute, fora do horario, reuniao, opcoes de som/notificacao) era checada num
 // ponto diferente do poll, e o bug do resolvido ignorando mute/reuniao foi o preco disso. Toda
 // regra nova de silencio entra AQUI, nao espalhada pelo _pollZabbixOnce.
-// kind: 'fresh' (novo) | 'woke' (fim de snooze) | 'nag' (re-alarme) | 'resolved'
+// kind: 'fresh' (novo) | 'woke' (fim de snooze) | 'nag' (re-alarme) | 'resolved' | 'info' (aviso)
 // ctx: { muted, offHours, inMeeting } calculado uma vez por poll.
 // muted = bloqueio total (o chamador pula ate a contabilidade do nag); offHours/reuniao so
 // suprimem o efeito (som/notificacao), o resto do ciclo segue igual.
@@ -441,6 +469,7 @@ function alertGate(kind, ctx) {
   if (ctx.inMeeting && config.meetSuppressSound && sound) { sound = false; why.push('meeting-sound'); }
   if (ctx.inMeeting && config.meetSuppressNotif && notif) { notif = false; why.push('meeting-notif'); }
   if (kind === 'resolved') { sound = false; notif = notif && !!config.notifyResolved; }
+  if (kind === 'info') sound = false; // aviso informativo (ex.: mudo com tempo acabou): so notificacao
   if (kind === 'nag') notif = notif && !!config.nagNotify;
   return { sound, notif, muted: !!ctx.muted, why };
 }
@@ -581,7 +610,14 @@ async function _pollZabbixOnce() {
   // dispara alerta - toda decisao de silencio passa por alertGate()/canAlert() (precedencia num
   // lugar so); offHours ja foi calculado acima (antes do setStatus).
   const now = Date.now();
-  const ctx = { muted: !!config.muted, offHours, inMeeting: config.suppressDuringMeeting && await isInMeeting() };
+  // mudo com tempo vencido: desliga sozinho e avisa (o nag, com lastAlarmTs parado durante o mudo,
+  // ja lembra no mesmo poll dos nao-ackados que continuam la).
+  let unmutedNow = false;
+  if (config.muted && Number(config.mutedUntil) > 0 && now >= Number(config.mutedUntil)) {
+    config.muted = false; config.mutedUntil = 0; saveConfig(); unmutedNow = true;
+  }
+  const ctx = { muted: isMutedNow(now), offHours, inMeeting: config.suppressDuringMeeting && await isInMeeting() };
+  if (unmutedNow && alertGate('info', ctx).notif) notifyInfo('zbx-unmuted', t('n_unmuted_t', resolveLang(config.lang)), t('n_unmuted_m', resolveLang(config.lang)));
 
   // alerta um lote (novos ou fim de snooze): um som (o da maior severidade) + ate
   // MAX_NOTIFS_PER_POLL notificacoes, a ultima avisando "e mais N". Retorna se algo saiu.
@@ -915,6 +951,14 @@ function notifyResolved(p, base, extraCount) {
   saveNotifUrl(id, problemUrl(base, p));
 }
 
+// aviso informativo da propria extensao (nao e um problema do Zabbix): id fixo, sem URL.
+function notifyInfo(id, title, message) {
+  chrome.notifications.create(id, {
+    type: 'basic', iconUrl: 'icons/icon128.png', title, message,
+    contextMessage: 'Zabbix NOC Alerter', priority: 1, requireInteraction: false
+  });
+}
+
 chrome.notifications.onClicked.addListener((id) => {
   takeNotifUrl(id).then((url) => {
     if (url) chrome.tabs.create({ url });
@@ -1035,7 +1079,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   }
 
   if (msg.action === 'getStatus') {
-    sendResponse({ status: state.status, muted: config.muted });
+    sendResponse({ status: state.status, muted: isMutedNow(Date.now()), mutedUntil: Number(config.mutedUntil) || 0 });
     // status velho (SW acordou agora / 1o poll falhou com a rede subindo) -> ja dispara um poll;
     // o popup tambem re-consulta sozinho quando percebe que o status esta vencido.
     const staleMs = Math.max(MIN_POLL_SEC, Number(config.pollInterval) || 15) * 2 * 1000;
@@ -1053,10 +1097,25 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   }
 
   if (msg.action === 'setMuted') {
+    // minutes > 0 = mudo com tempo; untilTs = ate um horario (fim do turno); nenhum = ate reativar
     config.muted = !!msg.muted;
+    const mins = Number(msg.minutes) || 0, until = Number(msg.untilTs) || 0;
+    config.mutedUntil = !config.muted ? 0 : (mins > 0 ? Date.now() + mins * 60000 : (until > Date.now() ? until : 0));
     saveConfig();
-    sendResponse({ ok: true, muted: config.muted });
+    sendResponse({ ok: true, muted: config.muted, mutedUntil: config.mutedUntil });
     return;
+  }
+
+  if (msg.action === 'getShiftEnd') {
+    // "mudo ate o fim do turno": fim do segmento atual do work_period (uniao das instancias
+    // legiveis = o mais tarde). Sem work_period legivel ou fora do horario -> null (popup esconde).
+    (async () => {
+      const { list } = await getWorkPeriods(enabledInstances(config));
+      const now = new Date();
+      const ends = list.map(i => workPeriodEnd(i.period, now)).filter(Boolean);
+      sendResponse({ untilTs: ends.length ? Math.max(...ends.map(d => d.getTime())) : null });
+    })();
+    return true;
   }
 
   if (msg.action === 'getWorkPeriod') {

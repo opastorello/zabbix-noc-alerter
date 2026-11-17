@@ -346,7 +346,7 @@ function resetSettings() {
     instances: [], excludePatterns: '', maxAgeDays: 0, pollInterval: 15, repeatAlarm: true, nagNotify: true, repeatInterval: 60,
     minSeverity: 4, soundEnabled: true, notificationsEnabled: true, notifyResolved: true, volume: 0.25,
     soundSev5: 'klaxon', soundSev4: 'siren', soundSev3: 'pulse', soundSev2: 'beepbeep', soundSev1: 'chime',
-    ignoreAckd: false, ignoreSuppressed: true, ignoreMaintenance: true, badgeUnseen: false, muted: false,
+    ignoreAckd: false, ignoreSuppressed: true, ignoreMaintenance: true, badgeUnseen: false, muted: false, mutedUntil: 0,
     suppressDuringMeeting: true, meetSuppressNotif: true, meetSuppressSound: true, workingTimeOnly: false, lang: currentLang
   };
   chrome.runtime.sendMessage({ action: 'setConfig', config: defaults }, () => {
@@ -360,6 +360,7 @@ function exportSettings() {
     const cfg = { ...(r?.config || {}) };
     delete cfg.apiToken; // legado: nao exporta o segredo
     delete cfg.muted;    // estado transitorio
+    delete cfg.mutedUntil;
     // multi-instancia: nao exporta os tokens nem as senhas das instancias (segredo)
     if (Array.isArray(cfg.instances)) cfg.instances = cfg.instances.map(i => ({ ...i, token: '', password: '' }));
     const blob = new Blob([JSON.stringify(cfg, null, 2)], { type: 'application/json' });

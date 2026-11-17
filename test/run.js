@@ -436,6 +436,38 @@ function P(ev, sev, x = {}) { return { eventid: String(ev), objectid: 't' + ev, 
   await poll();
   assert(captured.notifs.some(isResolvedNotif), 'problema que sai do problem.get (resolvido de verdade) continua gerando o toast');
 
+  console.log('\n--- Integracao: mudo com tempo desliga sozinho e avisa ---');
+  scenario.byBase = { 'https://zMute': [P(320, 5)], 'https://z2': [] };
+  await setConfig({ instances: [{ id: 'instMute', label: 'PRD', url: 'https://zMute', token: 't1', enabled: true }], minSeverity: 0, repeatAlarm: false, muted: false, mutedUntil: 0, suppressDuringMeeting: false, workingTimeOnly: false, notificationsEnabled: true, soundEnabled: true });
+  await poll(); // baseline
+  const m1 = await send({ action: 'setMuted', muted: true, minutes: 15 });
+  assert(m1.muted === true && Math.abs(m1.mutedUntil - (Date.now() + 15 * 60000)) < 5000, 'setMuted com minutes: mudo ate agora+15min');
+  scenario.byBase['https://zMute'].push(P(321, 5, { name: 'chegou mutado' }));
+  await poll();
+  assert(!captured.sounds.length && !captured.notifs.length, 'durante o mudo com tempo: problema novo nao alerta');
+  eq((await send({ action: 'getStatus' })).mutedUntil, m1.mutedUntil, 'getStatus devolve mutedUntil pro popup mostrar a contagem');
+  BG.getConfig().mutedUntil = Date.now() - 1000; // o tempo do mudo passou
+  scenario.byBase['https://zMute'].push(P(322, 5, { name: 'chegou depois do mudo' }));
+  await poll();
+  assert(BG.getConfig().muted === false && BG.getConfig().mutedUntil === 0, 'mudo vencido desliga sozinho no poll');
+  assert(captured.notifs.some(n => n.id === 'zbx-unmuted'), 'avisa com uma notificacao que os alertas voltaram');
+  assert(captured.sounds.length === 1 && captured.notifs.some(n => /chegou depois do mudo/.test(n.message)), 'problema novo apos o fim do mudo alerta normalmente');
+  const m2 = await send({ action: 'setMuted', muted: true });
+  eq([m2.muted, m2.mutedUntil], [true, 0], 'setMuted sem tempo: mudo ate reativar (mutedUntil 0)');
+  await poll();
+  assert(BG.getConfig().muted === true, 'mudo sem tempo continua ligado apos o poll');
+  const m3 = await send({ action: 'setMuted', muted: false });
+  eq([m3.muted, m3.mutedUntil], [false, 0], 'desmutar zera o mutedUntil');
+  // fim do turno: segmento atual do work_period
+  const wpe = sandbox.workPeriodEnd('1-5,09:00-18:00', new Date(2026, 6, 8, 10, 30));
+  eq(wpe && [wpe.getHours(), wpe.getMinutes(), wpe.getDate()], [18, 0, 8], 'workPeriodEnd: quarta 10:30 em 1-5,09:00-18:00 termina 18:00 do mesmo dia');
+  eq(sandbox.workPeriodEnd('1-5,09:00-18:00', new Date(2026, 6, 11, 10, 0)), null, 'workPeriodEnd: fora do periodo (sabado) = null');
+  const wpe24 = sandbox.workPeriodEnd('1-7,00:00-24:00', new Date(2026, 6, 8, 23, 0));
+  eq(wpe24 && [wpe24.getDate(), wpe24.getHours()], [9, 0], 'workPeriodEnd: 24:00 vira meia-noite do dia seguinte');
+  eq(sandbox.workPeriodEnd('', new Date()), null, 'workPeriodEnd: sem periodo = null (sem turno pra acabar)');
+  const wpeU = sandbox.workPeriodEnd('1-5,08:00-12:00;1-5,09:00-20:00', new Date(2026, 6, 8, 10, 0));
+  eq(wpeU && wpeU.getHours(), 20, 'workPeriodEnd: segmentos sobrepostos = o fim mais tarde');
+
   console.log('\n--- Integracao: importar settings nao apaga token/senha locais ---');
   // o arquivo exportado leva token:'' e password:'' de proposito; importar ele de volta (mesmo
   // navegador, backup) nao pode zerar as credenciais, senao toda instancia token/senha vira erro.

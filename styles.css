@@ -103,3 +103,10 @@ footer { margin-top:8px; }
 .credit a { color:var(--accent); text-decoration:none; font-weight:600; }
 
 ::-webkit-scrollbar { width:4px; } ::-webkit-scrollbar-thumb { background:var(--border); border-radius:2px; }
+/* mudo com tempo: presets abaixo do cabecalho + faixa dizendo ate quando (silencio explicavel) */
+.mute-menu { display:flex; flex-wrap:wrap; align-items:center; gap:4px; margin-bottom:8px; padding:6px; background:var(--bg-card); border:1px solid var(--border); border-radius:4px; }
+.mute-label { font-size:10px; color:var(--text-dim); margin-right:2px; }
+.muteopt { font-size:10px; background:#2a2416; color:var(--warn); border:1px solid #4a3a1a; padding:2px 7px; border-radius:3px; cursor:pointer; }
+.muteopt:hover { background:#3a3020; }
+.mutex { margin-left:auto; font-size:10px; background:none; border:none; color:var(--text-dim); cursor:pointer; }
+.mute-info { font-size:10px; padding:5px 8px; margin-bottom:8px; border-radius:4px; background:#2a2416; border:1px solid #4a3a1a; color:var(--warn); }
