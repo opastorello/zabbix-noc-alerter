@@ -7,6 +7,15 @@ in `manifest.json`.
 
 ## [Unreleased]
 
+### Added
+- "Newest" sort option in the popup, next to "Age" (oldest first) (GitHub #28).
+- Problems that appeared since the popup was last opened get a "NEW" tag in the
+  list, independent of the "unseen" badge option (GitHub #28).
+
+### Fixed
+- Problems from a disabled host no longer stay in the list; Zabbix does not
+  close them on its own and already hides them in its own UI (GitHub #27).
+
 ## [0.5.0]
 
 ### Added
