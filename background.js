@@ -1298,7 +1298,14 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     // um problema que apareceu bem naquela hora ser adotado como "ja conhecido" e nunca alertar.
     if (filterSignature(config) !== oldFilterSig) {
       state.initialized = false;
-      state.instBaselined = {}; // cada instancia re-baseia no proximo poll COM SUCESSO dela
+      // re-baseia so quem esta RESPONDENDO (o poll deste proprio setConfig faz isso agora). Uma
+      // instancia cega mantem o baseline que o carry-forward segura: zerar o dela faria um desastre
+      // que chegou durante a queda ser adotado calado como "ja existia" quando ela voltar. Custo
+      // aceito: o que so ficou visivel pelo filtro novo nessa instancia alerta como novo na volta.
+      Object.keys(state.instBaselined).forEach(id => {
+        const s = state.instStatus[id];
+        if (!s || s.state === 'ok') delete state.instBaselined[id];
+      });
       state.lastAlarmTs = 0;
     }
     scheduleAlarm();

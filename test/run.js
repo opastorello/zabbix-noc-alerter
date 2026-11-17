@@ -1044,6 +1044,29 @@ function P(ev, sev, x = {}) { return { eventid: String(ev), objectid: 't' + ev, 
   eq(dupInst[3].token, 'tokC2', 'import: 2a instancia da mesma URL mantem o PROPRIO token, nao o da 1a');
 
   // =================================================================
+  // 2a passada adversarial (sobre os fixes da rodada). Testes que FALHAM no codigo atual.
+
+  console.log('\n--- Bug hunt v0.6 (2a passada): re-baseline do setConfig com OUTRA instancia cega ---');
+  // A ja tinha baseline e caiu (sessao); o operador adiciona um 2o Zabbix nas Opcoes (o filtro da A
+  // nao muda). O re-baseline zera instBaselined de TODAS: a A, ainda cega, perde o baseline que o
+  // carry-forward mantinha. Um desastre que chega na A durante a queda e adotado calado ao voltar.
+  scenario.cookie = zbxCookie('sess-rb-1');
+  scenario.byBase = { 'https://zRbA': [P(410, 4, { name: 'ja conhecido antes da queda' })], 'https://zRbB': [] };
+  const instRbA = { id: 'instRbA', label: 'A', url: 'https://zRbA', authType: 'session', enabled: true };
+  await setConfig({ instances: [instRbA], minSeverity: 0, repeatAlarm: false, muted: false, mutedUntil: 0, notificationsEnabled: true, soundEnabled: true, blindSpotAlert: false, workingTimeOnly: false, suppressDuringMeeting: false });
+  await poll();
+  scenario.cookie = null; await poll(); // sessao da A caiu: carry-forward
+  await setConfig({ instances: [instRbA, { id: 'instRbB', label: 'B', url: 'https://zRbB', token: 'tB', enabled: true }] });
+  eq(BG.getState().instStatus.instRbA.state, 'no-session', '(pre) A continua sem sessao depois de adicionar a B');
+  scenario.byBase['https://zRbA'].push(P(411, 5, { name: 'desastre durante a queda' }));
+  await poll();
+  scenario.cookie = zbxCookie('sess-rb-2'); // operador loga de novo no Zabbix da A
+  await poll();
+  eq(BG.getState().instStatus.instRbA.state, 'ok', '(pre) A voltou');
+  assert(captured.sounds.length === 1 && captured.notifs.some(n => n.message === 'desastre durante a queda'), 'instancia cega durante um re-baseline (outra instancia adicionada): o desastre que chegou nela durante a queda alerta quando ela volta, nao e adotado calado');
+  scenario.cookie = null;
+
+  // =================================================================
   console.log('\n' + '='.repeat(44));
   console.log('RESULTADO: ' + pass + ' passaram, ' + fail + ' falharam');
   console.log('='.repeat(44));
