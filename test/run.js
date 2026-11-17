@@ -396,6 +396,26 @@ function P(ev, sev, x = {}) { return { eventid: String(ev), objectid: 't' + ev, 
   await poll();
   assert(captured.notifs.some(n => /resolv|recuper|resolved/i.test(n.title + ' ' + n.message)), 'problema que some gera notificacao de resolvido');
 
+  console.log('\n--- Integracao: problema so ESCONDIDO (ainda aberto no Zabbix) nao vira "resolvido" ---');
+  // host desabilitado (#27), trigger desabilitado (#25), ack com ignoreAckd, manutencao com
+  // ignoreMaintenance: o problem.get continua devolvendo o problema, a extensao so deixa de mostrar.
+  const isResolvedNotif = (n) => /resolv|recuper|resolved/i.test(n.title + ' ' + n.message);
+  scenario.byBase = { 'https://zHid': [P(310, 5), P(311, 4), P(312, 4), P(313, 4), P(314, 3)], 'https://z2': [] };
+  await setConfig({ instances: [{ id: 'instHid', label: 'PRD', url: 'https://zHid', token: 't1', enabled: true }], minSeverity: 0, notifyResolved: true, notificationsEnabled: true, repeatAlarm: false, muted: false, suppressDuringMeeting: false, ignoreAckd: true, ignoreMaintenance: true });
+  await poll(); // baseline: os 5 visiveis
+  scenario.disabledHosts = ['ht311'];          // host do 311 desabilitado
+  scenario.disabledTriggers = ['t312'];        // trigger do 312 desabilitado
+  scenario.byBase['https://zHid'][3] = P(313, 4, { acknowledged: '1' });                        // 313 ackado (ignoreAckd)
+  scenario.byBase['https://zHid'][4] = P(314, 3, { suppressed: '1', suppression_data: [{ maintenanceid: '7' }] }); // 314 entrou em manutencao
+  await poll();
+  eq((status().problems || []).map(p => p.eventid).sort(), ['310'], 'os 4 escondidos somem da lista (comportamento mantido)');
+  eq(captured.notifs.filter(isResolvedNotif).length, 0, 'nenhum toast de "resolvido" pra problema que continua aberto no Zabbix');
+  scenario.disabledHosts = []; scenario.disabledTriggers = [];
+  // e o resolvido de verdade continua notificando
+  scenario.byBase['https://zHid'] = [];
+  await poll();
+  assert(captured.notifs.some(isResolvedNotif), 'problema que sai do problem.get (resolvido de verdade) continua gerando o toast');
+
   console.log('\n--- Integracao: resolvido respeita mute e modo reuniao (hardening) ---');
   scenario.byBase = { 'https://z1': [P(301, 5)], 'https://z2': [] };
   await setConfig({ instances: BG.getConfig().instances, minSeverity: 0, notifyResolved: true, notificationsEnabled: true, repeatAlarm: false, muted: true });

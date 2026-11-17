@@ -15,6 +15,10 @@ in `manifest.json`.
 ### Fixed
 - Problems from a disabled host no longer stay in the list; Zabbix does not
   close them on its own and already hides them in its own UI (GitHub #27).
+- A problem that only stops being shown (its host or trigger got disabled, it
+  was acknowledged with "ignore acknowledged" on, it entered maintenance with
+  "ignore maintenance" on) no longer fires a false "Resolved" notification;
+  only a problem that actually closed in Zabbix does.
 
 ## [0.5.0]
 

@@ -687,6 +687,10 @@ async function _pollInstance(inst, _retried) {
   resetBackoff(inst.id); // problem.get respondeu: instancia esta viva, zera o backoff
 
   if (!Array.isArray(problems)) problems = [];
+  // tudo que o problem.get devolveu, ANTES dos filtros do cliente: problema que sai da lista mas
+  // continua aqui esta so ESCONDIDO (host/trigger desabilitado, ack com ignoreAckd, manutencao...),
+  // nao resolvido - nao pode gerar o toast de "Resolvido" pra algo ainda aberto no Zabbix.
+  const openOnServer = new Set(problems.map(p => String(p.eventid)));
 
   const maxAgeMs = (Number(config.maxAgeDays) || 0) * 86400 * 1000;
   let active = problems.filter(p => {
@@ -766,7 +770,10 @@ async function _pollInstance(inst, _retried) {
     fresh = active.filter(p => !state.known.has(inst.id + ':' + p.eventid));
     for (const [key, d] of state.known) {
       if (key.startsWith(inst.id + ':') && !currentMap.has(key)) {
-        resolved.push({ eventid: key.split(':')[1], ...d });
+        const eventid = key.split(':')[1];
+        // so escondido (ainda aberto no servidor): sai do known sem notificar "resolvido"
+        if (openOnServer.has(eventid)) continue;
+        resolved.push({ eventid, ...d });
       }
     }
   }
