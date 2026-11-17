@@ -450,4 +450,6 @@ function ago(ms) {
   return Math.floor(d / DAY_MS) + 'd';
 }
 
-function esc(s) { const d = document.createElement('div'); d.textContent = s || ''; return d.innerHTML; }
+// innerHTML de texto so escapa & < >: as aspas tem que ser na mao, porque esc() tambem vai dentro de
+// atributos (title="...", data-tag="...") e um nome com aspas fecharia o atributo no meio
+function esc(s) { const d = document.createElement('div'); d.textContent = s || ''; return d.innerHTML.replace(/"/g, '&quot;'); }

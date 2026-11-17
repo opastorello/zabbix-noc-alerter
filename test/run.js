@@ -1205,6 +1205,14 @@ function P(ev, sev, x = {}) { return { eventid: String(ev), objectid: 't' + ev, 
   eq(chips(popRow(tagsP, { showTags: '7', tagNameFormat: 'xx' })).length, 3, 'valor invalido no config cai no padrao (3 chips)');
   eq(chips(popRow(tagsP, { showTags: '2' })).length, 2, 'numero vindo como texto do <select> funciona');
 
+  console.log('\n--- popup: aspas no nome/host/tag nao quebram os atributos da linha ---');
+  // esc() do popup nao escapava aspas (o das Opcoes ja escapava): title="${esc(nome)}" com aspas no
+  // nome fechava o atributo no meio e o resto do texto virava atributos soltos na tag.
+  const quoteP = { eventid: '2', instId: 'i1', host: 'srv-01', name: 'Disco "C:" cheio', severity: '4', clock: '1', tags: [{ tag: 'path', value: 'C:"x"' }] };
+  rowH = popRow(quoteP, {});
+  assert(rowH.includes('title="Disco &quot;C:&quot; cheio"'), 'aspas no nome do problema ficam escapadas dentro do title');
+  assert(rowH.includes('data-tag="path:C:&quot;x&quot;"'), 'aspas no valor da tag ficam escapadas no data-tag (o clique filtra pelo valor certo)');
+
   // trocar so a exibicao nao pode re-basear (salvar as Opcoes viraria uma enxurrada de "novos")
   scenario.byBase = { 'https://zDisp': [P(470, 5, { name: 'ja existia' })] };
   await setConfig({ instances: [{ id: 'instD', label: 'D', url: 'https://zDisp', token: 'tD', enabled: true }], minSeverity: 0, repeatAlarm: false, muted: false, mutedUntil: 0, notificationsEnabled: true, soundEnabled: true, blindSpotAlert: false });
