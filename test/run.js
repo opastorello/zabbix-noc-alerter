@@ -954,6 +954,36 @@ function P(ev, sev, x = {}) { return { eventid: String(ev), objectid: 't' + ev, 
   notifButtonListener(nR3.id, 0); await tick(80);
   assert(!(scenario.ackCalls || []).length && captured.notifs.some(n => /^zbx-ackerr-/.test(n.id)), 'instancia removida: nenhum ACK enviado, e um aviso explica');
 
+  console.log('\n--- Bug hunt v0.6: notificacao de ponto cego nao fica velha apos corrigir a credencial ---');
+  scenario.badToken = 'tok-velho';
+  scenario.byBase = { 'https://zBlFix': [P(356, 4)] };
+  const instFx = { id: 'instFx', label: 'FIX', url: 'https://zBlFix', authType: 'token', token: 'tok-velho', enabled: true };
+  await setConfig({ instances: [instFx], minSeverity: 0, repeatAlarm: false, muted: false, mutedUntil: 0, blindSpotAlert: true, blindSpotMinutes: 2, notificationsEnabled: true, soundEnabled: true, workingTimeOnly: false, suppressDuringMeeting: false });
+  await poll(); ageDown('instFx', 5); BG.getState().instBackoff = {}; await poll();
+  assert(blindNotifs().some(n => n.id === 'zbx-blind-instFx'), '(pre) token invalido ha mais de N min: ponto cego avisado');
+  scenario.badToken = null;
+  resetCaptures();
+  await setConfig({ instances: [{ ...instFx, token: 'tok-novo' }] }); // corrige o token nas Opcoes; o poll do proprio setConfig ja volta ok
+  const clearedAfterFix = captured.cleared.slice();
+  await poll();
+  eq(BG.getState().instStatus.instFx.state, 'ok', '(pre) token corrigido: instancia volta a ok');
+  assert(clearedAfterFix.concat(captured.cleared).includes('zbx-blind-instFx'), 'token corrigido nas Opcoes: a notificacao de ponto cego (requireInteraction) e fechada, nao fica na tela dizendo que esta cego');
+  // instancia removida enquanto cega: a notificacao dela fecha
+  scenario.badToken = 'tok-rm';
+  await setConfig({ instances: [{ ...instFx, token: 'tok-rm' }, { id: 'instFx2', label: 'OUTRA', url: 'https://zBlFix2', token: 't2', enabled: true }] });
+  await poll(); ageDown('instFx', 5); BG.getState().instBackoff = {}; await poll();
+  assert(blindNotifs().some(n => n.id === 'zbx-blind-instFx'), '(pre) cega de novo');
+  resetCaptures();
+  await setConfig({ instances: [{ id: 'instFx2', label: 'OUTRA', url: 'https://zBlFix2', token: 't2', enabled: true }] }); // remove a cega
+  assert(captured.cleared.includes('zbx-blind-instFx'), 'instancia removida enquanto cega: a notificacao fixa dela fecha');
+  scenario.badToken = null;
+  // service worker reiniciou (flags so em memoria): a 1a vez que a instancia aparece ok fecha uma notificacao velha
+  BG.getState().blindAlerted = {}; BG.getState().blindOkSeen = {};
+  resetCaptures(); await poll();
+  assert(captured.cleared.includes('zbx-blind-instFx2'), 'SW reiniciado: 1o poll ok fecha qualquer notificacao de cego velha da instancia');
+  resetCaptures(); await poll();
+  assert(!captured.cleared.includes('zbx-blind-instFx2'), 'e nao fica chamando clear a cada poll depois disso');
+
   // =================================================================
   console.log('\n' + '='.repeat(44));
   console.log('RESULTADO: ' + pass + ' passaram, ' + fail + ' falharam');

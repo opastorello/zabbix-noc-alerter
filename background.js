@@ -171,7 +171,8 @@ let state = {
   lastActive: {},         // instId -> ultima lista de "active" com sucesso (reusada enquanto em backoff)
   downSince: {},          // instId -> desde quando a instancia nao esta 'ok' (ponto cego)
   blindAlerted: {},       // instId -> ja avisou o ponto cego desta queda (avisa 1x e de novo so ao voltar)
-  instBaselined: {}       // instId -> ja teve um poll COM SUCESSO desde o ultimo (re)baseline
+  instBaselined: {},      // instId -> ja teve um poll COM SUCESSO desde o ultimo (re)baseline
+  blindOkSeen: {}         // instId -> ja foi vista 'ok' nesta vida do SW (limpa notificacao de cego velha 1x)
 };
 let _pollInFlight = false, _pollAgain = false; // mutex + coalescing do poll
 
@@ -727,13 +728,17 @@ function checkBlindSpots(instances, ctx, now) {
   const limitMs = Math.max(1, Number(config.blindSpotMinutes) || 2) * 60000;
   const ids = new Set(instances.map(i => i.id));
   Object.keys(state.downSince).forEach(id => { if (!ids.has(id)) delete state.downSince[id]; });
-  Object.keys(state.blindAlerted).forEach(id => { if (!ids.has(id)) delete state.blindAlerted[id]; });
+  // instancia desligada/removida: a notificacao fixa de "cego" dela nao pode ficar na tela pra sempre
+  Object.keys(state.blindAlerted).forEach(id => { if (!ids.has(id)) { delete state.blindAlerted[id]; chrome.notifications.clear('zbx-blind-' + id); } });
   for (const inst of instances) {
     const s = state.instStatus[inst.id];
     if (!s) continue;
     if (s.state === 'ok') {
+      // fecha a notificacao de "cego" tambem na 1a vez que a instancia aparece ok nesta vida do
+      // service worker: blindAlerted e so memoria, e um SW reiniciado deixaria uma notificacao fixa velha
+      if (state.blindAlerted[inst.id] || !state.blindOkSeen[inst.id]) chrome.notifications.clear('zbx-blind-' + inst.id);
+      state.blindOkSeen[inst.id] = true;
       if (state.blindAlerted[inst.id]) {
-        chrome.notifications.clear('zbx-blind-' + inst.id);
         if (alertGate('info', ctx).notif) {
           notifyInfo('zbx-blindok-' + inst.id, t('n_blind_ok_t', lang).replace('{inst}', inst.label), t('n_blind_ok_m', lang));
         }
@@ -1239,7 +1244,11 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     saveConfig();
     (config.instances || []).forEach(i => {
       // conexao mudou (ex.: a URL agora aponta pra um 6.x): o modo de auth aprendido nao vale mais
-      if (oldConn.get(i.id) !== connSig(i)) { delete state.downSince[i.id]; delete state.blindAlerted[i.id]; delete state.authModes[i.id]; }
+      // a notificacao fixa de "cego" falava da conexao antiga: fecha (continua cego = novo aviso em N min)
+      if (oldConn.get(i.id) !== connSig(i)) {
+        if (state.blindAlerted[i.id]) chrome.notifications.clear('zbx-blind-' + i.id);
+        delete state.downSince[i.id]; delete state.blindAlerted[i.id]; delete state.authModes[i.id];
+      }
     });
     // Limpar instStatus de instancias removidas
     const validIds = new Set((config.instances || []).map(i => i.id));

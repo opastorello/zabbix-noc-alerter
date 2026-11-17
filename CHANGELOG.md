@@ -24,7 +24,10 @@ in `manifest.json`.
   instance for 2 minutes (configurable) - session lost, invalid token, Zabbix
   down, no network - it warns once with a notification that stays on screen
   and its own sound, and again when the instance is back. A Zabbix the
-  extension cannot see used to look exactly like a quiet one.
+  extension cannot see used to look exactly like a quiet one. The blind-spot
+  notification closes when the instance is fixed in Options, disabled or
+  removed, and an old one left over after the browser restarted the
+  extension closes as soon as the instance answers.
 - Tags: each row shows up to 3 of the problem's tags as chips (click one to
   filter the list by it; the text filter also matches tags), and each instance
   accepts a tag filter pushed to the server like the host groups:
