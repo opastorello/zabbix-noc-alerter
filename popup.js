@@ -215,6 +215,7 @@ function displayOpts(c) {
     showTags: [0, 1, 2, 3].includes(n) ? n : 3,
     tagNameFormat: ['full', 'short', 'none'].includes(c.tagNameFormat) ? c.tagNameFormat : 'full',
     tagPriority: String(c.tagPriority || '').split(/[,\n]/).map(s => s.trim().toLowerCase()).filter(Boolean),
+    opdataMode: ['none', 'separate', 'name'].includes(c.opdataMode) ? c.opdataMode : 'separate',
   };
 }
 let disp = displayOpts({});
@@ -292,6 +293,9 @@ function renderList(problems, filtered, groupBy) {
   const rowHtml = (p) => {
     const [lbl, cls] = SEV[p.severity] || ['?', 'info'];
     const snoozed = p.snoozedUntil && p.snoozedUntil > Date.now();
+    // opdata (valor do trigger) como no Zabbix: linha separada, entre parenteses junto do nome, ou nada
+    const op = String(p.opdata || '').trim();
+    const nameTxt = (op && disp.opdataMode === 'name') ? (p.name || '') + ' (' + op + ')' : p.name;
     const instBadge = (multiInst && p.instLabel) ? `<span class="inst-badge">${esc(p.instLabel)}</span>` : '';
     const tags = (p.unseen ? `<span class="tag new" title="${t('tag_new', lang)}">${t('tag_new', lang)}</span>` : '')
       + (p.acknowledged ? '<span class="tag ackd">&#x2713; ACK</span>' : '')
@@ -305,8 +309,8 @@ function renderList(problems, filtered, groupBy) {
       <span class="badge ${cls}">${lbl}</span>
       <div class="txt">
         ${p.host ? `<div class="host">${instBadge}${esc(p.host)}</div>` : (instBadge ? `<div class="host">${instBadge}</div>` : '')}
-        <div class="name" title="${esc(p.name)}">${esc(p.name)}</div>
-        ${p.opdata ? `<div class="opdata" title="${esc(p.opdata)}">${esc(p.opdata)}</div>` : ''}
+        <div class="name" title="${esc(nameTxt)}">${esc(nameTxt)}</div>
+        ${op && disp.opdataMode === 'separate' ? `<div class="opdata" title="${esc(op)}">${esc(op)}</div>` : ''}
         ${tagRowHtml(p)}
         ${p.acknowledged && p.ackmsg ? `<div class="ackinfo" title="${esc(p.ackmsg)}">&#x2713; ${esc(p.ackmsg)}</div>` : ''}
       </div>

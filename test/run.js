@@ -1205,6 +1205,21 @@ function P(ev, sev, x = {}) { return { eventid: String(ev), objectid: 't' + ev, 
   eq(chips(popRow(tagsP, { showTags: '7', tagNameFormat: 'xx' })).length, 3, 'valor invalido no config cai no padrao (3 chips)');
   eq(chips(popRow(tagsP, { showTags: '2' })).length, 2, 'numero vindo como texto do <select> funciona');
 
+  console.log('\n--- Exibicao: opdata estilo Zabbix (nao mostrar / linha separada / junto do nome) ---');
+  eq(DEF.opdataMode, 'separate', 'padrao do opdata = linha separada (visual de antes)');
+  const opP = { eventid: '3', instId: 'i1', host: 'web-01', name: 'CPU alta', severity: '4', clock: '1', opdata: 'CPU: 97.3 %', tags: [] };
+  const nameOf = (html) => (html.match(/class="name"[^>]*>([^<]*)</) || [])[1];
+  const opLine = (html) => (html.match(/class="opdata"[^>]*>([^<]*)</) || [])[1] || null;
+  rowH = popRow(opP, {});
+  eq([nameOf(rowH), opLine(rowH)], ['CPU alta', 'CPU: 97.3 %'], 'sem config: opdata numa linha separada (igual a antes)');
+  rowH = popRow(opP, { opdataMode: 'name' });
+  eq([nameOf(rowH), opLine(rowH)], ['CPU alta (CPU: 97.3 %)', null], 'junto do nome: entre parenteses depois do nome, como no Zabbix, e sem a linha separada');
+  assert(rowH.includes('title="CPU alta (CPU: 97.3 %)"'), '...e o texto ao passar o mouse tambem traz o valor');
+  rowH = popRow(opP, { opdataMode: 'none' });
+  eq([nameOf(rowH), opLine(rowH)], ['CPU alta', null], 'nao mostrar: nem linha separada, nem no nome');
+  eq(nameOf(popRow({ ...opP, opdata: '  ' }, { opdataMode: 'name' })), 'CPU alta', 'problema sem opdata (ou so espacos): nome sem parenteses vazios');
+  eq(opLine(popRow(opP, { opdataMode: 'xx' })), 'CPU: 97.3 %', 'valor invalido no config cai no padrao (linha separada)');
+
   console.log('\n--- popup: aspas no nome/host/tag nao quebram os atributos da linha ---');
   // esc() do popup nao escapava aspas (o das Opcoes ja escapava): title="${esc(nome)}" com aspas no
   // nome fechava o atributo no meio e o resto do texto virava atributos soltos na tag.

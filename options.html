@@ -219,6 +219,14 @@
         <input type="text" id="tagPriority" data-i18n-ph="tag_prio_ph" placeholder="service, team">
         <div class="desc" data-i18n="tag_prio_desc">Tags com estes nomes aparecem primeiro, nesta ordem (vírgula). Vazio = ordem do Zabbix.</div>
       </div>
+      <div class="field">
+        <label for="opdataMode" data-i18n="opdata_mode">Valor do trigger (opdata)</label>
+        <select id="opdataMode">
+          <option value="separate" data-i18n="opdata_sep">Em linha separada</option>
+          <option value="name" data-i18n="opdata_name">Junto do nome do problema</option>
+          <option value="none" data-i18n="opdata_none">Não mostrar</option>
+        </select>
+      </div>
     </div>
   </div>
 

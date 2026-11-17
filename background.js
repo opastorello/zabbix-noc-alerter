@@ -46,6 +46,7 @@ const DEFAULT_CONFIG = {
   showTags: 3,            // quantas tags por problema: 0..3
   tagNameFormat: 'full',  // 'full' (service:web) | 'short' (ser:web) | 'none' (web)
   tagPriority: '',        // nomes de tag que aparecem primeiro, nesta ordem (virgula)
+  opdataMode: 'separate', // valor do trigger no popup: 'separate' (linha propria) | 'name' (junto do nome) | 'none'
   lang: ''                // '' = auto (idioma do navegador); 'pt' | 'en' | 'es'
 };
 
