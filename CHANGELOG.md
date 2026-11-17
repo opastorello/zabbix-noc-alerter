@@ -15,6 +15,9 @@ in `manifest.json`.
   longer silence the NOC for a whole weekend. Picking "until end of
   shift" after the shift already ended does nothing, instead of muting until
   you remember to unmute.
+  When a timed mute ends, problems that arrived during it and are still open
+  and unacknowledged alert once, so nothing that came in while muted is lost
+  even with the re-alarm off.
 - The trigger's operational data ("CPU 97%", "free 4%") is shown on each row
   of the popup and in the notification text, so you can triage on the value
   instead of only the trigger name.
@@ -65,6 +68,9 @@ in `manifest.json`.
   extension to sleep now works for every notification of a batch, not only
   the last one: concurrent writes of the notification targets overwrote each
   other.
+- A snooze ending in the same poll as a new problem no longer plays two
+  sounds on top of each other: one sound plays, the one of the highest
+  severity.
 - Removing an instance in Options no longer renumbers the others. Instance ids
   used to follow the card position, so after removing #1 a snoozed problem,
   the known-problems state or an "ACK" button on an older notification could

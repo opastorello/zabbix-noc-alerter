@@ -34,6 +34,7 @@ const DEFAULT_CONFIG = {
   maxAgeDays: 0,          // = "Age less than N days" do Zabbix (0 = todos; corta cronicos velhos)
   muted: false,           // mudo (pelo popup); com mutedUntil > 0 desliga sozinho nessa hora
   mutedUntil: 0,          // timestamp do fim do mudo com tempo (0 = ate reativar na mao)
+  mutedAt: 0,             // quando o mudo comecou (no fim do mudo com tempo, re-alerta o que chegou durante)
   suppressDuringMeeting: true, // silenciar durante reuniao ativa do Google Meet
   meetSuppressSound: true,     // silenciar sons durante reuniao
   meetSuppressNotif: true,     // silenciar notificacoes durante reuniao
@@ -84,6 +85,7 @@ function mergeImportedConfig(current, incoming) {
   delete data.apiToken; // legado (formato flat): import nunca sobrescreve o token do usuario
   delete data.muted;    // estado transitorio, nao e preferencia
   delete data.mutedUntil;
+  delete data.mutedAt;
   if (Array.isArray(data.instances)) {
     const local = (current && current.instances) || [];
     // varias instancias na MESMA URL (filtros diferentes, credenciais diferentes) sao normais:
@@ -659,20 +661,28 @@ async function _pollZabbixOnce() {
   const now = Date.now();
   // mudo com tempo vencido: desliga sozinho e avisa (o nag, com lastAlarmTs parado durante o mudo,
   // ja lembra no mesmo poll dos nao-ackados que continuam la).
-  let unmutedNow = false;
+  let unmutedNow = false, mutedSince = 0;
   if (config.muted && Number(config.mutedUntil) > 0 && now >= Number(config.mutedUntil)) {
-    config.muted = false; config.mutedUntil = 0; saveConfig(); unmutedNow = true;
+    mutedSince = Number(config.mutedAt) || 0;
+    config.muted = false; config.mutedUntil = 0; config.mutedAt = 0; saveConfig(); unmutedNow = true;
   }
   const ctx = { muted: isMutedNow(now), offHours, inMeeting: config.suppressDuringMeeting && await isInMeeting() };
   if (unmutedNow && alertGate('info', ctx).notif) notifyInfo('zbx-unmuted', t('n_unmuted_t', resolveLang(config.lang)), t('n_unmuted_m', resolveLang(config.lang)));
 
   // alerta um lote (novos ou fim de snooze): um som (o da maior severidade) + ate
   // MAX_NOTIFS_PER_POLL notificacoes, a ultima avisando "e mais N". Retorna se algo saiu.
+  // UM som por poll: novos + fim do mudo + fim de snooze no mesmo poll antes tocavam um preset por
+  // lote, empilhados (o offscreen nao corta o anterior). Os lotes so acumulam a maior severidade e o
+  // som sai uma vez depois deles. Um problema tambem nao entra em dois lotes do mesmo poll.
+  let pollSoundSev = -1;
+  const batchedKeys = new Set();
   const alertBatch = (list, gate) => {
+    list = list.filter(p => !batchedKeys.has(p._instId + ':' + p.eventid));
+    list.forEach(p => batchedKeys.add(p._instId + ':' + p.eventid));
     if (!list.length) return false;
     let alerted = false;
     if (gate.sound) {
-      playSound(soundForSeverity(list.reduce((m, p) => Math.max(m, Number(p.severity)), 0)), config.volume);
+      pollSoundSev = Math.max(pollSoundSev, list.reduce((m, p) => Math.max(m, Number(p.severity)), 0));
       alerted = true;
     }
     if (gate.notif) {
@@ -690,11 +700,24 @@ async function _pollZabbixOnce() {
   // lastAlarmTs, achava que estava atrasado e mandava uma SEGUNDA notificacao no mesmo poll.
   if (alertBatch(allFresh.filter(p => canAlert(p, 'fresh')), alertGate('fresh', ctx))) state.lastAlarmTs = now;
 
+  // MUDO COM TEMPO ACABOU: o que chegou DURANTE o mudo e continua aberto, sem ack, fora de snooze e
+  // de manutencao alerta agora (como um snooze global que acabou) - senao, com o re-alarme desligado,
+  // um desastre que chegou no meio do mudo nunca alertaria. Os que chegaram neste mesmo poll ja
+  // saem como "novos" acima (e nao entram de novo: batchedKeys).
+  if (unmutedNow && mutedSince) {
+    const duringMute = allActive.filter(p => {
+      const e = state.known.get(p._instId + ':' + p.eventid);
+      return e && e.firstSeenTs >= mutedSince && canAlert(p, 'nag');
+    });
+    if (alertBatch(duringMute, alertGate('woke', ctx))) state.lastAlarmTs = now;
+  }
+
   // SNOOZE ACABOU: re-alerta na hora, mesmo com re-alarme off e sem ser "novo".
   if (justWoke.length) {
     const woke = allActive.filter(p => justWoke.includes(snzKey(p)) && canAlert(p, 'woke'));
     if (alertBatch(woke, alertGate('woke', ctx))) state.lastAlarmTs = now;
   }
+  if (pollSoundSev >= 0) playSound(soundForSeverity(pollSoundSev), config.volume);
 
   // NAG: re-alarma enquanto houver problema NAO-ackado (som + notificacao, ate dar ack ou mute).
   // Mutado = nem a contabilidade roda (ao desmutar, o lembrete sai no 1o poll); fora do horario e
@@ -1308,8 +1331,11 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     // "ate as HH:MM" com o horario ja passado (menu do popup aberto ate o turno acabar): nao ha o que
     // silenciar. Antes caia em mutedUntil 0 = mudo INDEFINIDO, o oposto do que foi pedido.
     const expiredUntil = msg.untilTs != null && !(mins > 0) && until <= Date.now();
+    const wasMuted = !!config.muted;
     config.muted = !!msg.muted && !expiredUntil;
     config.mutedUntil = !config.muted ? 0 : (mins > 0 ? Date.now() + mins * 60000 : (until > Date.now() ? until : 0));
+    // inicio do mudo: trocar so a duracao de um mudo ja ativo mantem o inicio original
+    config.mutedAt = !config.muted ? 0 : (wasMuted && config.mutedAt ? config.mutedAt : Date.now());
     saveConfig();
     sendResponse({ ok: true, muted: config.muted, mutedUntil: config.mutedUntil });
     return;

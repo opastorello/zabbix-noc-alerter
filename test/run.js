@@ -626,6 +626,33 @@ function P(ev, sev, x = {}) { return { eventid: String(ev), objectid: 't' + ev, 
   assert(BG.getConfig().muted === false && BG.getConfig().mutedUntil === 0, 'mudo vencido desliga sozinho no poll');
   assert(captured.notifs.some(n => n.id === 'zbx-unmuted'), 'avisa com uma notificacao que os alertas voltaram');
   assert(captured.sounds.length === 1 && captured.notifs.some(n => /chegou depois do mudo/.test(n.message)), 'problema novo apos o fim do mudo alerta normalmente');
+  // re-alarme DESLIGADO: o que chegou durante o mudo com tempo e continua aberto tem que alertar
+  // quando o mudo acaba (como o fim de um snooze), senao some calado
+  scenario.byBase = { 'https://zMute2': [P(325, 5, { name: 'ja existia antes do mudo' })], 'https://z2': [] };
+  await setConfig({ instances: [{ id: 'instMute2', label: 'PRD', url: 'https://zMute2', token: 't1', enabled: true }], repeatAlarm: false, muted: false, mutedUntil: 0 });
+  await poll();
+  await send({ action: 'setMuted', muted: true, minutes: 60 });
+  scenario.byBase['https://zMute2'].push(P(326, 5, { name: 'chegou durante o mudo' }), P(327, 4, { name: 'chegou e levou ack', acknowledged: '1' }));
+  await poll();
+  assert(!captured.sounds.length && !captured.notifs.length, '(pre) durante o mudo nada alerta');
+  BG.getConfig().mutedUntil = Date.now() - 1000;
+  await poll();
+  const wokeMsgs = captured.notifs.filter(n => !/^zbx-unmuted$/.test(n.id)).map(n => n.message);
+  eq(wokeMsgs, ['chegou durante o mudo'], 'fim do mudo com tempo: alerta o que chegou durante ele e continua aberto sem ack (so isso)');
+  assert(captured.sounds.length === 1, 'com som (um so)');
+  await poll();
+  assert(!captured.sounds.length && !captured.notifs.length, 'e nao repete no poll seguinte');
+
+  // fim de snooze + problema novo no MESMO poll: um som so, e ganha a maior severidade
+  scenario.byBase = { 'https://zOv': [P(328, 5, { name: 'desastre adiado' })], 'https://z2': [] };
+  await setConfig({ instances: [{ id: 'instOv', label: 'PRD', url: 'https://zOv', token: 't1', enabled: true }], repeatAlarm: false, muted: false, mutedUntil: 0 });
+  await poll();
+  BG.getState().snoozes['instOv:328'] = Date.now() - 1; // o snooze do desastre acabou agora
+  scenario.byBase['https://zOv'].push(P(329, 2, { name: 'warning novo' }));
+  await poll();
+  eq(captured.sounds.map(s => s.preset), ['klaxon'], 'fim de snooze (desastre) + novo (warning) no mesmo poll: UM som, o do desastre');
+  assert(captured.notifs.some(n => n.message === 'desastre adiado') && captured.notifs.some(n => n.message === 'warning novo'), 'as duas notificacoes saem normalmente');
+
   const m2 = await send({ action: 'setMuted', muted: true });
   eq([m2.muted, m2.mutedUntil], [true, 0], 'setMuted sem tempo: mudo ate reativar (mutedUntil 0)');
   await poll();
