@@ -19,6 +19,12 @@ in `manifest.json`.
   was acknowledged with "ignore acknowledged" on, it entered maintenance with
   "ignore maintenance" on) no longer fires a false "Resolved" notification;
   only a problem that actually closed in Zabbix does.
+- Importing a settings file no longer wipes the API token or password of your
+  instances (the exported file never carries them, by design). A local secret
+  is kept only for an instance with the same URL (and the same username, for
+  password mode), so a file can never point your token at another server. The
+  0.3.0 notes already promised tokens were "never overwritten on import"; that
+  only held for the legacy single-instance token until now.
 
 ## [0.5.0]
 

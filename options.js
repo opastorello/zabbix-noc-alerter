@@ -378,8 +378,9 @@ function importSettings(file) {
     try {
       const data = JSON.parse(reader.result);
       if (!data || typeof data !== 'object' || Array.isArray(data)) throw new Error('invalid');
-      delete data.apiToken; // import nunca sobrescreve o token do usuario
-      chrome.runtime.sendMessage({ action: 'setConfig', config: data }, () => {
+      // importConfig (nao setConfig): o background preserva token/senha locais da mesma URL,
+      // ja que o arquivo exportado nunca carrega segredo
+      chrome.runtime.sendMessage({ action: 'importConfig', config: data }, () => {
         loadSettings();
         showAlert(t('import_ok', lang), 'success');
       });

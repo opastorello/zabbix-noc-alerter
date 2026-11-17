@@ -416,6 +416,30 @@ function P(ev, sev, x = {}) { return { eventid: String(ev), objectid: 't' + ev, 
   await poll();
   assert(captured.notifs.some(isResolvedNotif), 'problema que sai do problem.get (resolvido de verdade) continua gerando o toast');
 
+  console.log('\n--- Integracao: importar settings nao apaga token/senha locais ---');
+  // o arquivo exportado leva token:'' e password:'' de proposito; importar ele de volta (mesmo
+  // navegador, backup) nao pode zerar as credenciais, senao toda instancia token/senha vira erro.
+  await setConfig({ instances: [
+    { id: 'inst1', label: 'PRD', url: 'https://zImp1', authType: 'token', token: 'tokA', enabled: true },
+    { id: 'inst2', label: 'HML', url: 'https://zImp2/', authType: 'password', username: 'noc', password: 'pwB', enabled: true },
+    { id: 'inst3', label: 'LAB', url: 'https://zImp3', authType: 'token', token: 'tokC', enabled: true },
+    { id: 'inst4', label: 'DEV', url: 'https://zImp4', authType: 'password', username: 'old', password: 'pwD', enabled: true },
+  ], minSeverity: 0, repeatAlarm: false });
+  await send({ action: 'importConfig', config: { minSeverity: 3, apiToken: 'legado', instances: [
+    { id: 'inst1', label: 'PRD-imp', url: 'https://zImp1', authType: 'token', token: '', enabled: true },
+    { id: 'inst2', label: 'HML-imp', url: 'https://zImp2', authType: 'password', username: 'noc', password: '', enabled: true },
+    { id: 'inst3', label: 'LAB-imp', url: 'https://outro-servidor', authType: 'token', token: '', enabled: true },
+    { id: 'inst4', label: 'DEV-imp', url: 'https://zImp4', authType: 'password', username: 'novo', password: '', enabled: true },
+  ] } });
+  const impInst = BG.getConfig().instances;
+  eq(impInst.map(i => i.label), ['PRD-imp', 'HML-imp', 'LAB-imp', 'DEV-imp'], 'import aplica as instancias do arquivo');
+  eq(BG.getConfig().minSeverity, 3, 'import aplica as opcoes globais do arquivo');
+  eq(impInst[0].token, 'tokA', 'mesma URL: token local preservado (arquivo vem sem token)');
+  eq(impInst[1].password, 'pwB', 'mesma URL (barra final ignorada) e mesmo usuario: senha local preservada');
+  eq(impInst[2].token, '', 'URL diferente: token local NAO vai pra outro servidor');
+  eq(impInst[3].password, '', 'usuario diferente: senha local NAO e reaproveitada');
+  assert(BG.getConfig().apiToken === undefined, 'apiToken legado do arquivo e ignorado');
+
   console.log('\n--- Integracao: resolvido respeita mute e modo reuniao (hardening) ---');
   scenario.byBase = { 'https://z1': [P(301, 5)], 'https://z2': [] };
   await setConfig({ instances: BG.getConfig().instances, minSeverity: 0, notifyResolved: true, notificationsEnabled: true, repeatAlarm: false, muted: true });

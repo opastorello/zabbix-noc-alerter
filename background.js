@@ -72,6 +72,28 @@ function filterSignature(cfg) {
   ]);
 }
 
+// Import de settings: o arquivo exportado leva token/senha vazios de proposito (nunca exporta
+// segredo), entao aplicar ele "cru" apagaria as credenciais locais de toda instancia. Mantem o
+// segredo local quando o campo do arquivo vem vazio, MAS so para a mesma URL (e, no modo senha,
+// o mesmo usuario): um arquivo nao pode redirecionar o token local para outro servidor.
+function mergeImportedConfig(current, incoming) {
+  const data = { ...(incoming || {}) };
+  delete data.apiToken; // legado (formato flat): import nunca sobrescreve o token do usuario
+  delete data.muted;    // estado transitorio, nao e preferencia
+  if (Array.isArray(data.instances)) {
+    const local = (current && current.instances) || [];
+    data.instances = data.instances.map(inc => {
+      const out = { ...inc };
+      const same = local.find(l => normalizeUrl(l.url) && normalizeUrl(l.url) === normalizeUrl(inc.url));
+      if (!same) return out;
+      if (!(out.token || '').trim() && same.token) out.token = same.token;
+      if (!out.password && same.password && (same.username || '').trim() === (out.username || '').trim()) out.password = same.password;
+      return out;
+    });
+  }
+  return data;
+}
+
 // Resolve os nomes de host group de uma instancia para groupids, cacheado por instId+nomes.
 // Vazio = sem filtro (observa todos os grupos). Nomes inexistentes sao ignorados (fail-open).
 async function resolveGroupIds(base, token, inst) {
@@ -953,6 +975,11 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     saveSnoozes();
     pollZabbix().then(() => sendResponse({ ok: true }));
     return true;
+  }
+
+  if (msg.action === 'importConfig') {
+    // mesmo caminho do setConfig, mas preservando as credenciais locais (mergeImportedConfig)
+    msg = { action: 'setConfig', config: mergeImportedConfig(config, msg.config) };
   }
 
   if (msg.action === 'setConfig') {
