@@ -63,7 +63,9 @@ in `manifest.json`.
   answers for the first time: adding an instance before logging into that
   Zabbix, or starting the browser before the network is up, used to treat
   every open problem there as new once it finally responded. The silent
-  baseline is now per instance and only taken on a successful poll.
+  baseline is now per instance and only taken on a successful poll, and a
+  filter change saved while a check was in flight no longer turns the
+  problems it just made visible into "new" alerts.
 - Clicking a notification (or its buttons) after the browser put the
   extension to sleep now works for every notification of a batch, not only
   the last one: concurrent writes of the notification targets overwrote each

@@ -1066,6 +1066,37 @@ function P(ev, sev, x = {}) { return { eventid: String(ev), objectid: 't' + ev, 
   assert(captured.sounds.length === 1 && captured.notifs.some(n => n.message === 'desastre durante a queda'), 'instancia cega durante um re-baseline (outra instancia adicionada): o desastre que chegou nela durante a queda alerta quando ela volta, nao e adotado calado');
   scenario.cookie = null;
 
+  console.log('\n--- Bug hunt v0.6 (2a passada): setConfig com um poll em voo gasta o baseline com o filtro velho ---');
+  // o problem.get leva severities (filtro no SERVIDOR) montado antes do await; o setConfig chega no
+  // meio, zera instBaselined, e o poll em voo marca a instancia como baselined com a lista do filtro
+  // velho. O poll coalescido seguinte ve tudo que so passou a ser visivel como "novo".
+  scenario.byBase = { 'https://zRace': [P(420, 4, { name: 'high antigo' }), P(421, 2, { name: 'warning antigo' })] };
+  await setConfig({ instances: [{ id: 'instRace', label: 'R', url: 'https://zRace', token: 'tR', enabled: true }], minSeverity: 4, repeatAlarm: false, muted: false, mutedUntil: 0, notificationsEnabled: true, soundEnabled: true, blindSpotAlert: false });
+  await poll();
+  const fetchOrigRace = sandbox.fetch;
+  let releaseRace = null;
+  sandbox.fetch = async (url, opts) => {
+    const b = JSON.parse(opts.body);
+    if (b.method === 'problem.get' && !releaseRace) await new Promise(r => { releaseRace = r; });
+    const res = await fetchOrigRace(url, opts);
+    if (b.method !== 'problem.get' || !Array.isArray(b.params.severities)) return res;
+    const data = await res.json(); // Zabbix filtra severities no servidor (o mock nao filtra)
+    data.result = data.result.filter(p => b.params.severities.includes(Number(p.severity)));
+    return { status: 200, json: async () => data };
+  };
+  resetCaptures();
+  const inflightRace = send({ action: 'pollNow' });
+  await tick(5); // poll parado no problem.get com severities [4,5]
+  const cfgRace = setConfig({ minSeverity: 2 }); // operador baixa a severidade minima nesse instante
+  releaseRace();
+  await inflightRace; await cfgRace; await tick(30);
+  sandbox.fetch = fetchOrigRace;
+  assert(!captured.notifs.some(n => n.message === 'warning antigo'), 'filtro alterado com um poll em voo: um problema que ja existia e so passou a ser visivel nao dispara como novo');
+  assert(!!probByEvent('instRace', '421'), 'mas aparece na lista (o poll seguinte, com o filtro novo, fez o baseline)');
+  scenario.byBase['https://zRace'].push(P(422, 3, { name: 'average novo de verdade' }));
+  await poll();
+  assert(captured.notifs.some(n => n.message === 'average novo de verdade'), 'e um problema novo de verdade depois disso alerta normalmente');
+
   // =================================================================
   console.log('\n' + '='.repeat(44));
   console.log('RESULTADO: ' + pass + ' passaram, ' + fail + ' falharam');

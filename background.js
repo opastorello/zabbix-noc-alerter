@@ -183,7 +183,8 @@ let state = {
   downSince: {},          // instId -> desde quando a instancia nao esta 'ok' (ponto cego)
   blindAlerted: {},       // instId -> ja avisou o ponto cego desta queda (avisa 1x e de novo so ao voltar)
   instBaselined: {},      // instId -> ja teve um poll COM SUCESSO desde o ultimo (re)baseline
-  blindOkSeen: {}         // instId -> ja foi vista 'ok' nesta vida do SW (limpa notificacao de cego velha 1x)
+  blindOkSeen: {},        // instId -> ja foi vista 'ok' nesta vida do SW (limpa notificacao de cego velha 1x)
+  filterGen: 0            // sobe a cada re-baseline: um poll que comecou ANTES nao pode marcar baseline
 };
 let _pollInFlight = false, _pollAgain = false; // mutex + coalescing do poll
 
@@ -541,6 +542,7 @@ async function isInMeeting() {
 async function _pollZabbixOnce() {
   const instances = enabledInstances(config);
   if (!instances.length) { setStatus({ state: 'unconfigured' }); setBadge('', ''); return; }
+  const gen = state.filterGen; // filtro mudou no meio deste poll -> ele nao vale como baseline
 
   // Poll todas as instancias em paralelo
   const results = await Promise.allSettled(instances.map(inst => _pollInstance(inst)));
@@ -567,8 +569,12 @@ async function _pollZabbixOnce() {
 
   state.known = newKnown;
   state.instStatus = newInstStatus; // troca atomica: instancia removida/desabilitada some do status
-  if (!state.initialized) state.lastAlarmTs = Date.now();
-  state.initialized = true;
+  // um setConfig que mudou o filtro NO MEIO deste poll: os dados vieram com o filtro velho, entao
+  // nao valem como baseline (o poll coalescido seguinte, ja com o filtro novo, e que baseia)
+  if (state.filterGen === gen) {
+    if (!state.initialized) state.lastAlarmTs = Date.now();
+    state.initialized = true;
+  }
 
   // URL base da instancia de um problema (pelo _instId nos ativos, ou instId nos resolvidos)
   const baseFor = (instId) => {
@@ -828,6 +834,7 @@ function _backoffSkipResult(inst) {
 async function _pollInstance(inst, _retried) {
   const base = normalizeUrl(inst.url);
   if (!base) return null;
+  const gen = state.filterGen; // capturado ANTES de qualquer await (o problem.get usa o filtro de agora)
 
   const bo = state.instBackoff[inst.id];
   if (bo && bo.nextAt > Date.now()) return _backoffSkipResult(inst);
@@ -982,7 +989,9 @@ async function _pollInstance(inst, _retried) {
     }
   }
 
-  state.instBaselined[inst.id] = true; // este poll deu certo: o proximo ja compara com ele
+  // este poll deu certo: o proximo ja compara com ele - a menos que o filtro tenha mudado enquanto
+  // o problem.get estava em voo (lista do filtro velho nao serve de baseline pro filtro novo)
+  if (state.filterGen === gen) state.instBaselined[inst.id] = true;
   const instStatus = { state: 'ok', via, label: inst.label, total: active.length, degraded: hostsDegraded };
   return { active, fresh, resolved, currentMap, instStatus };
 }
@@ -1297,6 +1306,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     // exclude, host group, instancias). Salvar uma opcao sem relacao (som, idioma...) nao pode fazer
     // um problema que apareceu bem naquela hora ser adotado como "ja conhecido" e nunca alertar.
     if (filterSignature(config) !== oldFilterSig) {
+      state.filterGen++;
       state.initialized = false;
       // re-baseia so quem esta RESPONDENDO (o poll deste proprio setConfig faz isso agora). Uma
       // instancia cega mantem o baseline que o carry-forward segura: zerar o dela faria um desastre
