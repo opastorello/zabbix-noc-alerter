@@ -184,7 +184,8 @@ let state = {
   blindAlerted: {},       // instId -> ja avisou o ponto cego desta queda (avisa 1x e de novo so ao voltar)
   instBaselined: {},      // instId -> ja teve um poll COM SUCESSO desde o ultimo (re)baseline
   blindOkSeen: {},        // instId -> ja foi vista 'ok' nesta vida do SW (limpa notificacao de cego velha 1x)
-  filterGen: 0            // sobe a cada re-baseline: um poll que comecou ANTES nao pode marcar baseline
+  filterGen: 0,           // sobe a cada re-baseline: um poll que comecou ANTES nao pode marcar baseline
+  pendingWoke: new Set()  // "instId:eventid" cujo snooze venceu DURANTE o mudo: alerta no fim do mudo com tempo
 };
 let _pollInFlight = false, _pollAgain = false; // mutex + coalescing do poll
 
@@ -665,8 +666,9 @@ async function _pollZabbixOnce() {
   // dispara alerta - toda decisao de silencio passa por alertGate()/canAlert() (precedencia num
   // lugar so); offHours ja foi calculado acima (antes do setStatus).
   const now = Date.now();
-  // mudo com tempo vencido: desliga sozinho e avisa (o nag, com lastAlarmTs parado durante o mudo,
-  // ja lembra no mesmo poll dos nao-ackados que continuam la).
+  // mudo com tempo vencido: desliga sozinho e avisa. O que chegou durante ele (ou teve o snooze
+  // vencido nele) alerta logo abaixo; se nada disso alertar, o nag (lastAlarmTs parado durante o
+  // mudo) lembra dos nao-ackados ja neste poll, senao um repeatInterval depois.
   let unmutedNow = false, mutedSince = 0;
   if (config.muted && Number(config.mutedUntil) > 0 && now >= Number(config.mutedUntil)) {
     mutedSince = Number(config.mutedAt) || 0;
@@ -710,18 +712,23 @@ async function _pollZabbixOnce() {
   // de manutencao alerta agora (como um snooze global que acabou) - senao, com o re-alarme desligado,
   // um desastre que chegou no meio do mudo nunca alertaria. Os que chegaram neste mesmo poll ja
   // saem como "novos" acima (e nao entram de novo: batchedKeys).
-  if (unmutedNow && mutedSince) {
+  // Tambem entram os snoozes que venceram durante o mudo (o fim deles saiu silenciado e o snooze
+  // foi apagado: sem isto o problema, ainda aberto, nunca mais alertaria com o re-alarme desligado).
+  if (unmutedNow) {
     const duringMute = allActive.filter(p => {
-      const e = state.known.get(p._instId + ':' + p.eventid);
-      return e && e.firstSeenTs >= mutedSince && canAlert(p, 'nag');
+      const key = p._instId + ':' + p.eventid, e = state.known.get(key);
+      return ((mutedSince && e && e.firstSeenTs >= mutedSince) || state.pendingWoke.has(key)) && canAlert(p, 'nag');
     });
+    state.pendingWoke.clear();
     if (alertBatch(duringMute, alertGate('woke', ctx))) state.lastAlarmTs = now;
   }
 
   // SNOOZE ACABOU: re-alerta na hora, mesmo com re-alarme off e sem ser "novo".
   if (justWoke.length) {
     const woke = allActive.filter(p => justWoke.includes(snzKey(p)) && canAlert(p, 'woke'));
-    if (alertBatch(woke, alertGate('woke', ctx))) state.lastAlarmTs = now;
+    const wokeGate = alertGate('woke', ctx);
+    if (wokeGate.muted) woke.forEach(p => state.pendingWoke.add(snzKey(p))); // mudo: guarda pro fim dele
+    else if (alertBatch(woke, wokeGate)) state.lastAlarmTs = now;
   }
   if (pollSoundSev >= 0) playSound(soundForSeverity(pollSoundSev), config.volume);
 
@@ -1349,6 +1356,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     // silenciar. Antes caia em mutedUntil 0 = mudo INDEFINIDO, o oposto do que foi pedido.
     const expiredUntil = msg.untilTs != null && !(mins > 0) && until <= Date.now();
     const wasMuted = !!config.muted;
+    if (!msg.muted) state.pendingWoke.clear(); // desmutar na mao: o operador esta olhando (o nag lembra)
     config.muted = !!msg.muted && !expiredUntil;
     config.mutedUntil = !config.muted ? 0 : (mins > 0 ? Date.now() + mins * 60000 : (until > Date.now() ? until : 0));
     // inicio do mudo: trocar so a duracao de um mudo ja ativo mantem o inicio original

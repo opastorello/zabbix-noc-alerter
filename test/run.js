@@ -1097,6 +1097,21 @@ function P(ev, sev, x = {}) { return { eventid: String(ev), objectid: 't' + ev, 
   await poll();
   assert(captured.notifs.some(n => n.message === 'average novo de verdade'), 'e um problema novo de verdade depois disso alerta normalmente');
 
+  console.log('\n--- Bug hunt v0.6 (2a passada): snooze que vence DURANTE o mudo com tempo ---');
+  // o fim do snooze cai no meio do mudo: o lote "woke" sai silenciado e o snooze e apagado. No fim do
+  // mudo, o re-alerta so olha firstSeenTs >= mutedAt, e o problema ja existia antes: nunca mais alerta.
+  scenario.byBase = { 'https://zSnzMute': [P(450, 5, { name: 'adiado e depois mudo' })] };
+  await setConfig({ instances: [{ id: 'instSm', label: 'PRD', url: 'https://zSnzMute', token: 'tS', enabled: true }], minSeverity: 0, repeatAlarm: false, muted: false, mutedUntil: 0, notificationsEnabled: true, soundEnabled: true, blindSpotAlert: false });
+  await poll();
+  BG.getState().snoozes['instSm:450'] = Date.now() + 15 * 60000; // operador adia 15 min
+  await send({ action: 'setMuted', muted: true, minutes: 60 });   // e depois muta por 1 h
+  BG.getState().snoozes['instSm:450'] = Date.now() - 1;            // o snooze vence no meio do mudo
+  await poll();
+  assert(!captured.sounds.length && !captured.notifs.length, '(pre) durante o mudo nada alerta');
+  BG.getConfig().mutedUntil = Date.now() - 1000;                    // fim do mudo
+  await poll();
+  assert(captured.notifs.some(n => n.message === 'adiado e depois mudo'), 'snooze que venceu durante o mudo com tempo (re-alarme off): o problema, ainda aberto e sem ack, alerta no fim do mudo em vez de sumir calado');
+
   // =================================================================
   console.log('\n' + '='.repeat(44));
   console.log('RESULTADO: ' + pass + ' passaram, ' + fail + ' falharam');

@@ -15,9 +15,9 @@ in `manifest.json`.
   longer silence the NOC for a whole weekend. Picking "until end of
   shift" after the shift already ended does nothing, instead of muting until
   you remember to unmute.
-  When a timed mute ends, problems that arrived during it and are still open
-  and unacknowledged alert once, so nothing that came in while muted is lost
-  even with the re-alarm off.
+  When a timed mute ends, problems that arrived during it (or whose snooze
+  ended during it) and are still open and unacknowledged alert once, so
+  nothing is lost while muted even with the re-alarm off.
 - The trigger's operational data ("CPU 97%", "free 4%") is shown on each row
   of the popup and in the notification text, so you can triage on the value
   instead of only the trigger name.
