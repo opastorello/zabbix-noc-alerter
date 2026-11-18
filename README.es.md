@@ -34,16 +34,19 @@ notificación, en tu navegador, mientras trabajas en cualquier otra cosa.
 - 🔑 **Tres modos de autenticación por instancia:** sesión del navegador (sin credenciales), token de API, o usuario y contraseña (la extensión inicia sesión y la renueva sola).
 - 🔊 **Sonido por severidad** con volumen y botón de prueba.
 - 🔁 **Re-alarma** (sonido y notificación) mientras haya un problema no reconocido, hasta dar ack o silencio.
+- 🔕 **Silencio temporal:** 15 min, 1 h, 4 h, hasta el fin del turno o hasta que lo reactives; el silencio temporal se desactiva solo y avisa.
+- 👁️ **Alerta de punto ciego:** avisa cuando la extensión deja de ver una instancia (sesión caída, token inválido, Zabbix caído, sin red), porque un Zabbix que no ves parece exactamente un Zabbix tranquilo.
 - 📅 **Alertar solo en horario laboral:** lee el Working time de tu servidor Zabbix y queda en silencio fuera de él (la lista y el badge siguen actualizándose).
 - 🎦 **Modo reunión (Google Meet):** silencia sonidos y/o notificaciones mientras estás en una llamada de Meet.
 - 🛠️ **Consciente de mantenimiento:** los problemas en ventana de mantenimiento reciben la etiqueta MNT y quedan en silencio (o los ocultas).
-- 🔍 **Filtro en vivo** en el popup por host o nombre del problema, o haciendo clic en una severidad; **ordenar** y **agrupar por host o instancia**.
+- 🔍 **Filtro en vivo** en el popup por host, nombre del problema o etiqueta, o haciendo clic en una severidad o en una etiqueta; **ordenar** (severidad, edad, más reciente, host) y **agrupar por host o instancia**; los problemas nuevos desde la última vez llevan la etiqueta NUEVO.
 - 💤 **Posponer (snooze) un solo problema** (15 min a 4 h) sin el silencio global; al terminar, vuelve a avisar.
-- 🖥️ **Muestra el host** (y la instancia, cuando monitoreas más de una) en la lista y en la notificación.
-- ✅ **Ack desde el popup** (con mensaje) y muestra el ack existente.
+- 🖥️ **Muestra el host** (y la instancia, cuando monitoreas más de una), los **datos operacionales** del trigger ("CPU 97%") y sus **etiquetas** en la lista; el host y los datos operacionales van también en la notificación.
+- 🎛️ **Elige qué se muestra:** cuántas etiquetas por problema, el nombre de la etiqueta (completo, abreviado o solo el valor) y cuáles van primero, las mismas opciones de la pantalla de Problemas de Zabbix; datos operacionales en su propia línea, junto al nombre u ocultos; mensaje del ACK, botones SNZ/ACK y contadores por severidad activables; modo compacto de una línea; y si la notificación lleva el valor y los botones.
+- ✅ **Ack o posponer directo desde la notificación** (botones ACK / Posponer 15 min), o desde el popup con mensaje; muestra el ack existente.
 - 🟢 **Notificación de resuelto** cuando un problema se recupera.
 - 🖱️ **Clic en el problema** abre el evento exacto en Zabbix.
-- 🔎 **Filtros:** severidad mínima, edad máxima, **grupos de hosts**, excluir por texto, ocultar suprimidos/reconocidos/en mantenimiento; badge "no vistos" opcional.
+- 🔎 **Filtros:** severidad mínima, edad máxima, **grupos de hosts**, **etiquetas**, excluir por texto, ocultar suprimidos/reconocidos/en mantenimiento; badge "no vistos" opcional.
 - 💾 **Backup:** exportar e importar la configuración en JSON (los tokens y contraseñas de las instancias nunca se exportan).
 - 🌐 **Idiomas:** English, Português, Español, elegido automáticamente por el navegador.
 - 🔒 **Nada fijo en código:** las URLs de Zabbix (y las credenciales) viven solo en las opciones.
@@ -71,7 +74,7 @@ de tres formas, elegida en las opciones:
 - **Token de API:** un token generado en Zabbix (Usuario > Tokens de API). Funciona sin pestaña de Zabbix abierta y sobrevive al logout del frontend.
 - **Usuario y contraseña:** la extensión inicia sesión en la API (`user.login`) y renueva la sesión sola cuando expira.
 
-**Compatibilidad:** probado en Zabbix 6.0 a 7.4 (la sesión del frontend y todas las llamadas a la API funcionan). Zabbix 8.0 se validará cuando llegue a una versión estable.
+**Compatibilidad:** probado en Zabbix 6.0 a 8.0 LTS (la sesión del frontend, token de API, usuario/contraseña y todas las llamadas a la API funcionan).
 
 ## Privacidad
 

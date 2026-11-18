@@ -7,14 +7,122 @@ in `manifest.json`.
 
 ## [Unreleased]
 
+## [0.6.0]
+
 ### Added
+- Timed mute: the mute button now offers 15 min, 1 h, 4 h, "until end of
+  shift" (when the server's working time is readable) or "until I unmute".
+  A timed mute turns itself off and says so with a notification, and the
+  popup shows a banner with how long is left, so a forgotten mute can no
+  longer silence the NOC for a whole weekend. Picking "until end of
+  shift" after the shift already ended does nothing, instead of muting until
+  you remember to unmute.
+  When a timed mute ends, problems that arrived during it (or whose snooze
+  ended during it) and are still open and unacknowledged alert once, so
+  nothing is lost while muted even with the re-alarm off.
+- The trigger's operational data ("CPU 97%", "free 4%") is shown on each row
+  of the popup and in the notification text, so you can triage on the value
+  instead of only the trigger name.
+- Act straight from the notification: every problem notification (new,
+  snooze ended, re-alarm) has "ACK" and "Snooze 15 min" buttons, so you can
+  react without opening the popup. A failed ACK shows the Zabbix error in a
+  notification instead of failing silently.
+- Blind-spot alert (on by default): when the extension cannot read an
+  instance for 2 minutes (configurable) - session lost, invalid token, Zabbix
+  down, no network - it warns once with a notification that stays on screen
+  and its own sound, and again when the instance is back. A Zabbix the
+  extension cannot see used to look exactly like a quiet one. The blind-spot
+  notification closes when the instance is fixed in Options, disabled or
+  removed, and an old one left over after the browser restarted the
+  extension closes as soon as the instance answers.
+- Tags: each row shows up to 3 of the problem's tags as chips (click one to
+  filter the list by it; the text filter also matches tags), and each instance
+  accepts a tag filter pushed to the server like the host groups:
+  `service:web` (contains), `env=prod` (equals), `team` (tag exists).
+- New "Display" section in Options. Tags get the same three settings as the
+  Problems page in Zabbix: how many to show per problem (none to 3), the tag
+  name (full, shortened to 3 letters, or value only) and a display priority
+  (for example `service, team` first, so template tags like
+  `class`/`component`/`scope` stop taking up the row). Clicking a chip still
+  filters by the full `tag:value`, and the text filter still matches every
+  tag, shown or not. The trigger's operational data also gets the Zabbix
+  choices: on its own line, with the problem name (in parentheses) or not
+  shown. Each part of the row can be turned off: the ACK message, the
+  SNZ/ACK buttons (for users without ACK permission; a snoozed problem
+  still shows a "SNZ 10m" badge) and the per-severity counters, plus a
+  compact mode with one line per problem. Notifications can leave out the
+  trigger value or the ACK/Snooze buttons. The defaults keep the popup and
+  the notifications looking exactly as before.
 - "Newest" sort option in the popup, next to "Age" (oldest first) (GitHub #28).
 - Problems that appeared since the popup was last opened get a "NEW" tag in the
   list, independent of the "unseen" badge option (GitHub #28).
 
 ### Fixed
+- A problem name, host or tag value containing double quotes (`Disk "C:"
+  full`) no longer breaks the popup row: the quotes cut the hover text short
+  and leaked the rest into the row's markup, and a tag chip with quotes
+  filtered by the wrong value.
+- A long ACK error shown in the popup is cut at 80 characters before it is
+  escaped, so it no longer ends in a broken entity like `&quo`.
+- A settings file with a value an Options list does not know (hand-edited,
+  or from a newer version) no longer leaves that list blank so the next Save
+  stores an empty value (for the tag count, that hid every tag); the list
+  falls back to its default.
 - Problems from a disabled host no longer stay in the list; Zabbix does not
   close them on its own and already hides them in its own UI (GitHub #27).
+- A problem that only stops being shown (its host or trigger got disabled, it
+  was acknowledged with "ignore acknowledged" on, it entered maintenance with
+  "ignore maintenance" on) no longer fires a false "Resolved" notification;
+  only a problem that actually closed in Zabbix does.
+- Importing a settings file no longer wipes the API token or password of your
+  instances (the exported file never carries them, by design). A local secret
+  is kept only for an instance with the same URL (and the same username, for
+  password mode), so a file can never point your token at another server;
+  several instances on the same URL each keep their own credential. The
+  0.3.0 notes already promised tokens were "never overwritten on import"; that
+  only held for the legacy single-instance token until now.
+- The popup now says when an instance stopped answering. With one instance a
+  lost session showed only "(session)" in green while the list kept the last
+  known problems; with several, "2/3 OK" never said which one failed. The
+  status bar now turns amber/red and names the instance and the reason.
+- No more burst of alerts for problems that already existed when an instance
+  answers for the first time: adding an instance before logging into that
+  Zabbix, or starting the browser before the network is up, used to treat
+  every open problem there as new once it finally responded. The silent
+  baseline is now per instance and only taken on a successful poll, and a
+  filter change saved while a check was in flight no longer turns the
+  problems it just made visible into "new" alerts.
+- Clicking a notification (or its buttons) after the browser put the
+  extension to sleep now works for every notification of a batch, not only
+  the last one: concurrent writes of the notification targets overwrote each
+  other.
+- A snooze ending in the same poll as a new problem no longer plays two
+  sounds on top of each other: one sound plays, the one of the highest
+  severity.
+- Removing an instance in Options no longer renumbers the others. Instance ids
+  used to follow the card position, so after removing #1 a snoozed problem,
+  the known-problems state or an "ACK" button on an older notification could
+  point at a different Zabbix. Ids are now stable, and the notification buttons
+  also check the instance URL before acting.
+- Pointing an instance at a different Zabbix URL no longer keeps showing (and
+  re-alarming) the old server's problems under it while the new one is not
+  readable yet; the new server's existing problems are adopted silently.
+
+### Changed
+- Zabbix 8.0 LTS is supported: validated live (browser session, API token,
+  username/password, problems, operational data, tags, acknowledge, working
+  time) next to 6.0. On Zabbix 7.2+ and 8.0, which no longer accept the
+  credential in the request body, a failing instance now shows the real
+  credential error instead of mixing in an "unexpected parameter auth"
+  message, and no longer spends an extra request per call on it.
+
+### Internal
+- Every silencing rule (mute, working hours, meeting mode, snooze, maintenance,
+  the sound/notification options) is now decided in one place for new
+  problems, snooze expiry, the re-alarm and the resolved notification, instead
+  of being checked separately in each path.
+- The test suite now also loads the real `popup.js` (with a minimal fake DOM),
+  so the popup row rendering and the display options have automated tests.
 
 ## [0.5.0]
 

@@ -6,7 +6,7 @@
 
 importScripts('i18n.js'); // traducoes (I18N, t, resolveLang) tambem no service worker
 
-const DEFAULT_INSTANCE = { id: '', label: '', url: '', authType: 'session', token: '', username: '', password: '', enabled: true, hostGroups: '' };
+const DEFAULT_INSTANCE = { id: '', label: '', url: '', authType: 'session', token: '', username: '', password: '', enabled: true, hostGroups: '', tags: '' };
 const MAX_INSTANCES = 8;
 
 const DEFAULT_CONFIG = {
@@ -32,11 +32,27 @@ const DEFAULT_CONFIG = {
   ignoreMaintenance: true,// ignorar problemas em manutencao (suppression por maintenance window)
   excludePatterns: '',    // esconder problema cujo nome/host contenha qualquer um destes (virgula ou linha)
   maxAgeDays: 0,          // = "Age less than N days" do Zabbix (0 = todos; corta cronicos velhos)
-  muted: false,           // mudo temporario (toggle pelo popup)
+  muted: false,           // mudo (pelo popup); com mutedUntil > 0 desliga sozinho nessa hora
+  mutedUntil: 0,          // timestamp do fim do mudo com tempo (0 = ate reativar na mao)
+  mutedAt: 0,             // quando o mudo comecou (no fim do mudo com tempo, re-alerta o que chegou durante)
   suppressDuringMeeting: true, // silenciar durante reuniao ativa do Google Meet
   meetSuppressSound: true,     // silenciar sons durante reuniao
   meetSuppressNotif: true,     // silenciar notificacoes durante reuniao
   workingTimeOnly: false, // alertar so dentro do Working time configurado no Zabbix server
+  blindSpotAlert: true,   // avisar quando a extensao parar de enxergar uma instancia (ponto cego)
+  blindSpotMinutes: 2,    // ...depois de quantos minutos seguidos sem conseguir ler os problemas
+  // Exibicao (so o que aparece; nao mexe em filtro nem alerta). Padroes = o visual de antes.
+  // As 3 de tags sao as mesmas da tela de Problemas do proprio Zabbix.
+  showTags: 3,            // quantas tags por problema: 0..3
+  tagNameFormat: 'full',  // 'full' (service:web) | 'short' (ser:web) | 'none' (web)
+  tagPriority: '',        // nomes de tag que aparecem primeiro, nesta ordem (virgula)
+  opdataMode: 'separate', // valor do trigger no popup: 'separate' (linha propria) | 'name' (junto do nome) | 'none'
+  showAckMsg: true,       // mensagem do ACK embaixo do problema reconhecido
+  showRowActions: true,   // botoes SNZ/ACK em cada linha (desligar: quem nao tem permissao de ACK)
+  showSevCounts: true,    // barra de contadores por severidade (que tambem filtra)
+  compactRows: false,     // uma linha por problema
+  notifOpdata: true,      // valor do trigger no texto da notificacao
+  notifButtons: true,     // botoes ACK / Adiar na notificacao (desligar: quem nao tem permissao de ACK)
   lang: ''                // '' = auto (idioma do navegador); 'pt' | 'en' | 'es'
 };
 
@@ -65,11 +81,63 @@ function enabledInstances(cfg) {
 // si mudou; salvar uma opcao qualquer (som, volume, idioma...) nao pode fazer um problema novo virar
 // "ja conhecido" so por coincidir com a janela do save.
 function filterSignature(cfg) {
-  const inst = (cfg.instances || []).map(i => [i.id, i.url, i.hostGroups || '', !!i.enabled]);
+  const inst = (cfg.instances || []).map(i => [i.id, i.url, i.hostGroups || '', i.tags || '', !!i.enabled]);
   return JSON.stringify([
     Number(cfg.minSeverity) || 0, cfg.excludePatterns || '', !!cfg.ignoreAckd,
     !!cfg.ignoreMaintenance, !!cfg.ignoreSuppressed, Number(cfg.maxAgeDays) || 0, inst
   ]);
+}
+
+// Import de settings: o arquivo exportado leva token/senha vazios de proposito (nunca exporta
+// segredo), entao aplicar ele "cru" apagaria as credenciais locais de toda instancia. Mantem o
+// segredo local quando o campo do arquivo vem vazio, MAS so para a mesma URL (e, no modo senha,
+// o mesmo usuario): um arquivo nao pode redirecionar o token local para outro servidor.
+function mergeImportedConfig(current, incoming) {
+  const data = { ...(incoming || {}) };
+  delete data.apiToken; // legado (formato flat): import nunca sobrescreve o token do usuario
+  delete data.muted;    // estado transitorio, nao e preferencia
+  delete data.mutedUntil;
+  delete data.mutedAt;
+  if (Array.isArray(data.instances)) {
+    const local = (current && current.instances) || [];
+    // varias instancias na MESMA URL (filtros diferentes, credenciais diferentes) sao normais:
+    // prefere a local de mesmo id; senao a primeira da mesma URL (senha: tambem o mesmo usuario)
+    const sameUrl = (l, inc) => normalizeUrl(l.url) && normalizeUrl(l.url) === normalizeUrl(inc.url);
+    const sameUser = (l, inc) => (l.username || '').trim() === (inc.username || '').trim();
+    const pick = (inc, ok) => local.find(l => l.id === inc.id && ok(l)) || local.find(ok);
+    data.instances = data.instances.map(inc => {
+      const out = { ...inc };
+      if (!(out.token || '').trim()) {
+        const src = pick(inc, l => sameUrl(l, inc) && l.token);
+        if (src) out.token = src.token;
+      }
+      if (!out.password) {
+        const src = pick(inc, l => sameUrl(l, inc) && sameUser(l, inc) && l.password);
+        if (src) out.password = src.password;
+      }
+      return out;
+    });
+  }
+  return data;
+}
+
+// Filtro de tags da instancia (empurrado pro problem.get, igual ao groupids): virgula ou linha.
+//   tag        -> a tag existe (operator 4)
+//   tag:valor  -> o valor CONTEM (operator 0, o padrao do Zabbix)
+//   tag=valor  -> o valor e IGUAL (operator 1)
+// So o primeiro ':' ou '=' separa (o valor pode ter ':', ex.: uma URL). Sem nome de tag = ignorado.
+function parseTagFilter(str) {
+  const out = [];
+  for (const raw of String(str || '').split(/[\n,]/)) {
+    const s = raw.trim();
+    if (!s) continue;
+    const m = s.match(/^([^:=]*)([:=])(.*)$/);
+    if (!m) { out.push({ tag: s, value: '', operator: 4 }); continue; }
+    const tag = m[1].trim();
+    if (!tag) continue;
+    out.push({ tag, value: m[3].trim(), operator: m[2] === '=' ? 1 : 0 });
+  }
+  return out;
 }
 
 // Resolve os nomes de host group de uma instancia para groupids, cacheado por instId+nomes.
@@ -100,6 +168,7 @@ const MAX_PROBLEMS_STORE = 2000;  // teto do total (todas as instancias somadas)
                                    // a cada poll; bem acima do uso real, so pra nao escrever um payload
                                    // sem limite no pior caso (8 instancias todas perto do teto acima).
 const MAX_NOTIFS_PER_POLL = 5;    // notificacoes do navegador por ciclo (anti-flood)
+const BLIND_SOUND = 'flatline';   // som do ponto cego: distinto de qualquer alerta de problema
 const MIN_POLL_SEC = 5;           // piso do intervalo de checagem
 const BACKOFF_BASE_SEC = 30;      // 1a espera apos falha de rede/API (dobra a cada falha seguinte)
 const BACKOFF_CAP_SEC = 300;      // teto do backoff (5 min), pra nao parar de tentar de vez
@@ -115,14 +184,20 @@ let state = {
   lastAlarmTs: 0,         // ultimo toque de som (pro nag)
   lastSeenTs: 0,          // quando o popup foi aberto pela ultima vez (base do badge de 'nao vistos')
   snoozes: {},            // "instId:eventid" -> timestamp ate quando o problema fica em silencio (snooze individual)
-  authModes: {},          // instId -> 'header' | 'body' = modo de auth por instancia (cache; evita 2x request no 6.x)
+  authModes: {},          // instId -> 'header' | 'body' | 'header-only' (7.2+ sem auth no corpo); cache, evita 2x request
   loginTokens: {},        // instId -> sessionid do user.login (modo usuario/senha; invalidado ao expirar)
   status: { state: 'unconfigured' },
   instStatus: {},         // instId -> {state, via, error, total, ...} status individual
   groupCache: {},         // instId -> {key, ids} cache da resolucao de host groups (nome -> groupid)
   workPeriodCache: {},    // instId -> {period|null, ts} cache do work_period (settings.get); null = falhou
   instBackoff: {},        // instId -> {fails, nextAt} backoff exponencial apos erro de rede/API (reseta no sucesso)
-  lastActive: {}          // instId -> ultima lista de "active" com sucesso (reusada enquanto em backoff)
+  lastActive: {},         // instId -> ultima lista de "active" com sucesso (reusada enquanto em backoff)
+  downSince: {},          // instId -> desde quando a instancia nao esta 'ok' (ponto cego)
+  blindAlerted: {},       // instId -> ja avisou o ponto cego desta queda (avisa 1x e de novo so ao voltar)
+  instBaselined: {},      // instId -> ja teve um poll COM SUCESSO desde o ultimo (re)baseline
+  blindOkSeen: {},        // instId -> ja foi vista 'ok' nesta vida do SW (limpa notificacao de cego velha 1x)
+  filterGen: 0,           // sobe a cada re-baseline: um poll que comecou ANTES nao pode marcar baseline
+  pendingWoke: new Set()  // "instId:eventid" cujo snooze venceu DURANTE o mudo: alerta no fim do mudo com tempo
 };
 let _pollInFlight = false, _pollAgain = false; // mutex + coalescing do poll
 
@@ -211,6 +286,8 @@ async function getSessionId(baseUrl) {
 
 // Erros do Zabbix que significam "credencial de sessao invalida/expirada"
 const AUTH_ERR_RE = /not authorized|session terminated|re-login|reauthorization|need to be logged/i;
+// Zabbix 7.2+ (8.0 incluso) rejeita o parametro 'auth' no corpo com um erro de schema
+const BODY_AUTH_GONE_RE = /unexpected parameter "auth"/i;
 
 // Modo de autenticacao da instancia; configs antigas (sem authType) derivam do token.
 function instAuthType(inst) {
@@ -279,14 +356,21 @@ async function apiCall(baseUrl, method, params, token, instId) {
 
   if (!token) throw new Error(t('e_nocred', resolveLang(config.lang)));
 
-  // ordem: o modo que ja funcionou nesta instancia primeiro (cache)
+  // ordem: o modo que ja funcionou nesta instancia primeiro (cache). 'header-only' = servidor que
+  // nao aceita mais 'auth' no corpo (Zabbix 7.2+/8.0): nem tenta o corpo.
   const cachedMode = instId ? state.authModes[instId] : null;
-  const order = cachedMode === 'body' ? ['body', 'header'] : ['header', 'body'];
+  const order = cachedMode === 'header-only' ? ['header'] : (cachedMode === 'body' ? ['body', 'header'] : ['header', 'body']);
   const tried = {};
   for (const mode of order) {
     const r = await call(mode);
     tried[mode] = r;
-    if (r.data && !r.data.error) { if (instId) state.authModes[instId] = mode; return r.data.result; }
+    if (r.data && !r.data.error) { if (instId && cachedMode !== 'header-only') state.authModes[instId] = mode; return r.data.result; }
+    // 7.2+ removeu o 'auth' do corpo: a resposta e um erro de schema que nao diz nada sobre a
+    // credencial, so poluia a mensagem real (a do header) e custava 1 request a mais por chamada
+    if (mode === 'body' && r.data && r.data.error && BODY_AUTH_GONE_RE.test(errText(r.data.error, r.res.status))) {
+      if (instId) state.authModes[instId] = 'header-only';
+      delete tried.body;
+    }
   }
 
   const bodyErr = tried.body && tried.body.data && tried.body.data.error && errText(tried.body.data.error, tried.body.res.status);
@@ -349,6 +433,32 @@ function inWorkPeriod(period, date) {
   return !anyValid; // nenhum segmento parseavel = fail-open (nao suprimir por formato estranho)
 }
 
+// Fim do segmento do work_period que contem a data (pro "mudo ate o fim do turno"), ou null se a
+// data esta fora de qualquer segmento (ou o periodo e vazio/invalido: ai nao ha turno pra acabar).
+function workPeriodEnd(period, date) {
+  const s = String(period || '').trim();
+  if (!s) return null;
+  const day = ((date.getDay() + 6) % 7) + 1;
+  const mins = date.getHours() * 60 + date.getMinutes();
+  let best = null;
+  for (const seg of s.split(';')) {
+    const m = seg.trim().match(/^(\d)(?:-(\d))?,(\d{1,2}):(\d{2})-(\d{1,2}):(\d{2})$/);
+    if (!m) continue;
+    const d1 = +m[1], d2 = m[2] != null ? +m[2] : d1;
+    const t1 = +m[3] * 60 + +m[4], t2 = +m[5] * 60 + +m[6];
+    if (day >= d1 && day <= d2 && mins >= t1 && mins < t2) {
+      const end = new Date(date.getFullYear(), date.getMonth(), date.getDate(), 0, t2, 0, 0); // t2=1440 vira meia-noite
+      if (!best || end > best) best = end;
+    }
+  }
+  return best;
+}
+
+// Mudo vale agora? (mudo com tempo vencido = nao, mesmo antes do poll limpar o estado)
+function isMutedNow(now) {
+  return !!config.muted && !(Number(config.mutedUntil) > 0 && now >= Number(config.mutedUntil));
+}
+
 const WORK_PERIOD_TTL_MS = 10 * 60 * 1000; // re-le o work_period do servidor a cada 10min
 
 // Le (com cache) o work_period de UMA instancia. Retorna {period} ou {err}.
@@ -401,6 +511,39 @@ async function isWorkingTime(instances) {
   return { working: list.some(i => inWorkPeriod(i.period, new Date())), error: '' };
 }
 
+// ===== Precedencia de silencio (num lugar so) =====
+// Responde "este TIPO de alerta pode tocar som / mostrar notificacao agora, e se nao, por que".
+// Antes cada regra (mute, fora do horario, reuniao, opcoes de som/notificacao) era checada num
+// ponto diferente do poll, e o bug do resolvido ignorando mute/reuniao foi o preco disso. Toda
+// regra nova de silencio entra AQUI, nao espalhada pelo _pollZabbixOnce.
+// kind: 'fresh' (novo) | 'woke' (fim de snooze) | 'nag' (re-alarme) | 'resolved' | 'info' (aviso)
+//       | 'blind' (ponto cego: mesmas regras de um alerta novo)
+// ctx: { muted, offHours, inMeeting } calculado uma vez por poll.
+// muted = bloqueio total (o chamador pula ate a contabilidade do nag); offHours/reuniao so
+// suprimem o efeito (som/notificacao), o resto do ciclo segue igual.
+function alertGate(kind, ctx) {
+  const why = [];
+  if (ctx.muted) why.push('muted');
+  if (ctx.offHours) why.push('off-hours');
+  let sound = !why.length && !!config.soundEnabled;
+  let notif = !why.length && !!config.notificationsEnabled;
+  if (ctx.inMeeting && config.meetSuppressSound && sound) { sound = false; why.push('meeting-sound'); }
+  if (ctx.inMeeting && config.meetSuppressNotif && notif) { notif = false; why.push('meeting-notif'); }
+  if (kind === 'resolved') { sound = false; notif = notif && !!config.notifyResolved; }
+  if (kind === 'info') sound = false; // aviso informativo (ex.: mudo com tempo acabou): so notificacao
+  if (kind === 'nag') notif = notif && !!config.nagNotify;
+  return { sound, notif, muted: !!ctx.muted, why };
+}
+
+// Por problema: manutencao nunca alerta; snoozado nao alerta como novo nem no nag; ackado nao
+// re-alerta (fim de snooze, nag).
+function canAlert(p, kind) {
+  if (inMaintenance(p)) return false;
+  if ((kind === 'fresh' || kind === 'nag') && isSnoozed(p)) return false;
+  if ((kind === 'woke' || kind === 'nag') && p.acknowledged === '1') return false;
+  return true;
+}
+
 async function isInMeeting() {
   // NUNCA deixar uma falha de tabs.query (permissao/contexto) abortar o poll inteiro -> sem alerta.
   try {
@@ -412,6 +555,7 @@ async function isInMeeting() {
 async function _pollZabbixOnce() {
   const instances = enabledInstances(config);
   if (!instances.length) { setStatus({ state: 'unconfigured' }); setBadge('', ''); return; }
+  const gen = state.filterGen; // filtro mudou no meio deste poll -> ele nao vale como baseline
 
   // Poll todas as instancias em paralelo
   const results = await Promise.allSettled(instances.map(inst => _pollInstance(inst)));
@@ -438,8 +582,12 @@ async function _pollZabbixOnce() {
 
   state.known = newKnown;
   state.instStatus = newInstStatus; // troca atomica: instancia removida/desabilitada some do status
+  // um setConfig que mudou o filtro NO MEIO deste poll: os dados vieram com o filtro velho, entao
+  // nao valem como baseline (o poll coalescido seguinte, ja com o filtro novo, e que baseia)
+  // O relogio do nag e re-ancorado em TODO poll sem baseline (valendo ou nao): o setConfig o zera,
+  // e sem isto o poll em voo soltaria um re-alarme espurio logo apos salvar o filtro.
   if (!state.initialized) state.lastAlarmTs = Date.now();
-  state.initialized = true;
+  if (state.filterGen === gen) state.initialized = true;
 
   // URL base da instancia de um problema (pelo _instId nos ativos, ou instId nos resolvidos)
   const baseFor = (instId) => {
@@ -503,6 +651,8 @@ async function _pollZabbixOnce() {
           severity: Number(p.severity), clock: Number(p.clock), acknowledged: p.acknowledged === '1',
           suppressed: p.suppressed === '1', maintenance: inMaintenance(p),
           snoozedUntil: Number(state.snoozes[snzKey(p)] || 0), ackmsg: p.ackmsg || '',
+          opdata: String(p.opdata || '').trim(),
+          tags: (Array.isArray(p.tags) ? p.tags : []).map(tg => ({ tag: String(tg.tag || ''), value: String(tg.value || '') })),
           instId: p._instId, instLabel: p._instLabel, unseen
         };
       })
@@ -525,73 +675,144 @@ async function _pollZabbixOnce() {
     setBadge(allActive.length ? String(allActive.length) : '', SEV_COLOR[maxSev] || '#97aab3');
   }
 
-  // dispara alerta
+  // dispara alerta - toda decisao de silencio passa por alertGate()/canAlert() (precedencia num
+  // lugar so); offHours ja foi calculado acima (antes do setStatus).
   const now = Date.now();
-  const inMeeting = config.suppressDuringMeeting && await isInMeeting();
-  // offHours ja calculado acima (antes do setStatus)
-  const suppressSound = offHours || (inMeeting && config.meetSuppressSound);
-  const suppressNotif = offHours || (inMeeting && config.meetSuppressNotif);
-  if (!config.muted) {
-    // NOVOS: som + notificacao imediatos. Manutencao NAO alarma (so aparece na lista, com a tag MNT).
-    const freshAlert = allFresh.filter(p => !inMaintenance(p) && !isSnoozed(p));
-    if (freshAlert.length) {
-      const freshMax = freshAlert.reduce((m, p) => Math.max(m, Number(p.severity)), 0);
-      let alerted = false;
-      if (config.soundEnabled && !suppressSound) { playSound(soundForSeverity(freshMax), config.volume); alerted = true; }
-      if (config.notificationsEnabled && !suppressNotif) {
-        freshAlert.sort((a, b) => Number(b.severity) - Number(a.severity));
-        const shown = freshAlert.slice(0, MAX_NOTIFS_PER_POLL);
-        const extra = freshAlert.length - shown.length;
-        shown.forEach((p, i) => notify(p, baseFor(p._instId), null, i === shown.length - 1 ? extra : 0));
-        alerted = true;
-      }
-      // conta como "acabou de alarmar" mesmo so com notificacao (som desligado): senao o nag, que
-      // usa lastAlarmTs pra saber quando foi o ultimo alerta, achava que estava atrasado e disparava
-      // uma SEGUNDA notificacao (zbx-nag) no mesmo poll pro problema que acabou de chegar.
-      if (alerted) state.lastAlarmTs = now;
+  // mudo com tempo vencido: desliga sozinho e avisa. O que chegou durante ele (ou teve o snooze
+  // vencido nele) alerta logo abaixo; se nada disso alertar, o nag (lastAlarmTs parado durante o
+  // mudo) lembra dos nao-ackados ja neste poll, senao um repeatInterval depois.
+  let unmutedNow = false, mutedSince = 0;
+  if (config.muted && Number(config.mutedUntil) > 0 && now >= Number(config.mutedUntil)) {
+    mutedSince = Number(config.mutedAt) || 0;
+    config.muted = false; config.mutedUntil = 0; config.mutedAt = 0; saveConfig(); unmutedNow = true;
+  }
+  const ctx = { muted: isMutedNow(now), offHours, inMeeting: config.suppressDuringMeeting && await isInMeeting() };
+  if (unmutedNow && alertGate('info', ctx).notif) notifyInfo('zbx-unmuted', t('n_unmuted_t', resolveLang(config.lang)), t('n_unmuted_m', resolveLang(config.lang)));
+
+  // alerta um lote (novos ou fim de snooze): um som (o da maior severidade) + ate
+  // MAX_NOTIFS_PER_POLL notificacoes, a ultima avisando "e mais N". Retorna se algo saiu.
+  // UM som por poll: novos + fim do mudo + fim de snooze no mesmo poll antes tocavam um preset por
+  // lote, empilhados (o offscreen nao corta o anterior). Os lotes so acumulam a maior severidade e o
+  // som sai uma vez depois deles. Um problema tambem nao entra em dois lotes do mesmo poll.
+  let pollSoundSev = -1;
+  const batchedKeys = new Set();
+  const alertBatch = (list, gate) => {
+    list = list.filter(p => !batchedKeys.has(p._instId + ':' + p.eventid));
+    list.forEach(p => batchedKeys.add(p._instId + ':' + p.eventid));
+    if (!list.length) return false;
+    let alerted = false;
+    if (gate.sound) {
+      pollSoundSev = Math.max(pollSoundSev, list.reduce((m, p) => Math.max(m, Number(p.severity)), 0));
+      alerted = true;
     }
-    // SNOOZE ACABOU: re-alerta na hora (som + notificacao), mesmo com re-alarme off e sem ser "novo".
-    if (justWoke.length) {
-      const woke = allActive.filter(p => justWoke.includes(snzKey(p)) && p.acknowledged !== '1' && !inMaintenance(p));
-      if (woke.length) {
-        const wokeMax = woke.reduce((m, p) => Math.max(m, Number(p.severity)), 0);
-        let wokeAlerted = false;
-        if (config.soundEnabled && !suppressSound) { playSound(soundForSeverity(wokeMax), config.volume); wokeAlerted = true; }
-        if (config.notificationsEnabled && !suppressNotif) {
-          woke.sort((a, b) => Number(b.severity) - Number(a.severity));
-          const shownWoke = woke.slice(0, MAX_NOTIFS_PER_POLL);
-          const extraWoke = woke.length - shownWoke.length;
-          shownWoke.forEach((p, i) => notify(p, baseFor(p._instId), null, i === shownWoke.length - 1 ? extraWoke : 0));
-          wokeAlerted = true;
-        }
-        if (wokeAlerted) state.lastAlarmTs = now;
-      }
+    if (gate.notif) {
+      const sorted = list.slice().sort((a, b) => Number(b.severity) - Number(a.severity));
+      const shown = sorted.slice(0, MAX_NOTIFS_PER_POLL);
+      const extra = sorted.length - shown.length;
+      shown.forEach((p, i) => notify(p, baseFor(p._instId), null, i === shown.length - 1 ? extra : 0));
+      alerted = true;
     }
-    // NAG: re-alarma enquanto houver problema NAO-ackado (som + notificacao, ate dar ack ou mute)
-    if (config.repeatAlarm && (config.soundEnabled || (config.notificationsEnabled && config.nagNotify))) {
-      const nagPool = allActive.filter(p => p.acknowledged !== '1' && !inMaintenance(p) && !isSnoozed(p)); // manutencao/snooze nao re-alarmam
-      const gap = Math.max(MIN_POLL_SEC, Number(config.repeatInterval) || 60) * 1000;
-      if (nagPool.length && (now - (state.lastAlarmTs || 0)) >= gap) {
-        const nagMax = nagPool.reduce((m, p) => Math.max(m, Number(p.severity)), 0);
-        if (config.soundEnabled && !suppressSound) playSound(soundForSeverity(nagMax), config.volume);
-        // re-notifica o problema de maior severidade com id FIXO -> atualiza no lugar (sem flood)
-        if (config.notificationsEnabled && config.nagNotify && !suppressNotif) {
-          const top = nagPool.find(p => Number(p.severity) === nagMax) || nagPool[0];
-          notify(top, baseFor(top._instId), 'zbx-nag');
-        }
-        state.lastAlarmTs = now;
-      } else if (!nagPool.length) {
-        chrome.notifications.clear('zbx-nag'); // ackou/resolveu tudo -> some a notificacao do re-alarme
+    return alerted;
+  };
+
+  // NOVOS: som + notificacao imediatos. Manutencao NAO alarma (so aparece na lista, com a tag MNT).
+  // Conta como "acabou de alarmar" mesmo so com notificacao (som desligado): senao o nag, que usa
+  // lastAlarmTs, achava que estava atrasado e mandava uma SEGUNDA notificacao no mesmo poll.
+  if (alertBatch(allFresh.filter(p => canAlert(p, 'fresh')), alertGate('fresh', ctx))) state.lastAlarmTs = now;
+
+  // MUDO COM TEMPO ACABOU: o que chegou DURANTE o mudo e continua aberto, sem ack, fora de snooze e
+  // de manutencao alerta agora (como um snooze global que acabou) - senao, com o re-alarme desligado,
+  // um desastre que chegou no meio do mudo nunca alertaria. Os que chegaram neste mesmo poll ja
+  // saem como "novos" acima (e nao entram de novo: batchedKeys).
+  // Tambem entram os snoozes que venceram durante o mudo (o fim deles saiu silenciado e o snooze
+  // foi apagado: sem isto o problema, ainda aberto, nunca mais alertaria com o re-alarme desligado).
+  if (unmutedNow) {
+    const duringMute = allActive.filter(p => {
+      const key = p._instId + ':' + p.eventid, e = state.known.get(key);
+      return ((mutedSince && e && e.firstSeenTs >= mutedSince) || state.pendingWoke.has(key)) && canAlert(p, 'nag');
+    });
+    state.pendingWoke.clear();
+    if (alertBatch(duringMute, alertGate('woke', ctx))) state.lastAlarmTs = now;
+  }
+
+  // SNOOZE ACABOU: re-alerta na hora, mesmo com re-alarme off e sem ser "novo".
+  if (justWoke.length) {
+    const woke = allActive.filter(p => justWoke.includes(snzKey(p)) && canAlert(p, 'woke'));
+    const wokeGate = alertGate('woke', ctx);
+    if (wokeGate.muted) woke.forEach(p => state.pendingWoke.add(snzKey(p))); // mudo: guarda pro fim dele
+    else if (alertBatch(woke, wokeGate)) state.lastAlarmTs = now;
+  }
+  if (pollSoundSev >= 0) playSound(soundForSeverity(pollSoundSev), config.volume);
+
+  // NAG: re-alarma enquanto houver problema NAO-ackado (som + notificacao, ate dar ack ou mute).
+  // Mutado = nem a contabilidade roda (ao desmutar, o lembrete sai no 1o poll); fora do horario e
+  // reuniao so suprimem o efeito, o relogio do nag continua andando.
+  const nagGate = alertGate('nag', ctx);
+  if (!nagGate.muted && config.repeatAlarm && (config.soundEnabled || (config.notificationsEnabled && config.nagNotify))) {
+    const nagPool = allActive.filter(p => canAlert(p, 'nag'));
+    const gap = Math.max(MIN_POLL_SEC, Number(config.repeatInterval) || 60) * 1000;
+    if (nagPool.length && (now - (state.lastAlarmTs || 0)) >= gap) {
+      const nagMax = nagPool.reduce((m, p) => Math.max(m, Number(p.severity)), 0);
+      if (nagGate.sound) playSound(soundForSeverity(nagMax), config.volume);
+      // re-notifica o problema de maior severidade com id FIXO -> atualiza no lugar (sem flood)
+      if (nagGate.notif) {
+        const top = nagPool.find(p => Number(p.severity) === nagMax) || nagPool[0];
+        notify(top, baseFor(top._instId), 'zbx-nag');
       }
+      state.lastAlarmTs = now;
+    } else if (!nagPool.length) {
+      chrome.notifications.clear('zbx-nag'); // ackou/resolveu tudo -> some a notificacao do re-alarme
     }
   }
 
-  // RESOLVIDOS: segue as mesmas regras de silencio dos alertas (mute, off hours, modo reuniao),
-  // em vez de checar so o off hours - senao um resolvido ainda notifica mutado ou em call.
-  if (!config.muted && config.notifyResolved && config.notificationsEnabled && !suppressNotif && allResolved.length) {
+  // RESOLVIDOS: mesmas regras de silencio dos alertas (mute, fora do horario, reuniao).
+  if (alertGate('resolved', ctx).notif && allResolved.length) {
     const shownResolved = allResolved.slice(0, MAX_NOTIFS_PER_POLL);
     const extraResolved = allResolved.length - shownResolved.length;
     shownResolved.forEach((p, i) => notifyResolved(p, baseFor(p.instId), i === shownResolved.length - 1 ? extraResolved : 0));
+  }
+
+  checkBlindSpots(instances, ctx, now);
+}
+
+// PONTO CEGO (dead man's switch): um Zabbix que a extensao nao enxerga (sessao caida, token
+// invalido, servidor fora, sem rede, em backoff) parece exatamente um Zabbix quieto - o pior modo
+// de falha de uma ferramenta de NOC. Cego por mais de blindSpotMinutes = avisa UMA vez, com som
+// proprio; quando volta, avisa que voltou. Silenciado agora (mudo, fora do horario, reuniao) = o
+// aviso fica pendente e sai no primeiro poll em que puder.
+function checkBlindSpots(instances, ctx, now) {
+  const lang = resolveLang(config.lang);
+  const limitMs = Math.max(1, Number(config.blindSpotMinutes) || 2) * 60000;
+  const ids = new Set(instances.map(i => i.id));
+  let soundPlayed = false; // varias instancias cegas no mesmo poll = um som so (como nos alertas de problema)
+  Object.keys(state.downSince).forEach(id => { if (!ids.has(id)) delete state.downSince[id]; });
+  // instancia desligada/removida: a notificacao fixa de "cego" dela nao pode ficar na tela pra sempre
+  Object.keys(state.blindAlerted).forEach(id => { if (!ids.has(id)) { delete state.blindAlerted[id]; chrome.notifications.clear('zbx-blind-' + id); } });
+  for (const inst of instances) {
+    const s = state.instStatus[inst.id];
+    if (!s) continue;
+    if (s.state === 'ok') {
+      // fecha a notificacao de "cego" tambem na 1a vez que a instancia aparece ok nesta vida do
+      // service worker: blindAlerted e so memoria, e um SW reiniciado deixaria uma notificacao fixa velha
+      if (state.blindAlerted[inst.id] || !state.blindOkSeen[inst.id]) chrome.notifications.clear('zbx-blind-' + inst.id);
+      state.blindOkSeen[inst.id] = true;
+      if (state.blindAlerted[inst.id]) {
+        if (alertGate('info', ctx).notif) {
+          notifyInfo('zbx-blindok-' + inst.id, t('n_blind_ok_t', lang).replace('{inst}', inst.label), t('n_blind_ok_m', lang));
+        }
+      }
+      delete state.downSince[inst.id];
+      delete state.blindAlerted[inst.id];
+      continue;
+    }
+    if (!state.downSince[inst.id]) state.downSince[inst.id] = now;
+    const downMs = now - state.downSince[inst.id];
+    if (!config.blindSpotAlert || state.blindAlerted[inst.id] || downMs < limitMs) continue;
+    const g = alertGate('blind', ctx);
+    if (!g.sound && !g.notif) continue; // silenciado agora: tenta de novo no proximo poll
+    if (g.sound && !soundPlayed) { playSound(BLIND_SOUND, config.volume); soundPlayed = true; }
+    if (g.notif) notifyBlind(inst, s, downMs);
+    state.blindAlerted[inst.id] = true;
   }
 }
 
@@ -632,6 +853,7 @@ function _backoffSkipResult(inst) {
 async function _pollInstance(inst, _retried) {
   const base = normalizeUrl(inst.url);
   if (!base) return null;
+  const gen = state.filterGen; // capturado ANTES de qualquer await (o problem.get usa o filtro de agora)
 
   const bo = state.instBackoff[inst.id];
   if (bo && bo.nextAt > Date.now()) return _backoffSkipResult(inst);
@@ -656,9 +878,12 @@ async function _pollInstance(inst, _retried) {
   let problems;
   try {
     const pget = {
-      output: ['eventid', 'objectid', 'name', 'severity', 'clock', 'acknowledged', 'suppressed'],
+      // opdata = "dados operacionais" do trigger com macros expandidas ("CPU 97%"): o NOC tria pelo
+      // valor, nao pelo nome do trigger. Vazio quando o trigger nao define.
+      output: ['eventid', 'objectid', 'name', 'severity', 'clock', 'acknowledged', 'suppressed', 'opdata'],
       selectAcknowledges: ['clock', 'message'],
       selectSuppressionData: ['maintenanceid'], // distingue manutencao de supressao manual
+      selectTags: ['tag', 'value'],             // chips na linha do popup + filtro por tag
       recent: false,
       sortfield: ['eventid'],
       sortorder: 'DESC',
@@ -668,6 +893,8 @@ async function _pollInstance(inst, _retried) {
     if (_min > 0) pget.severities = Array.from({ length: 6 - _min }, (_, i) => _min + i);
     const gids = await resolveGroupIds(base, token, inst); // filtro por host group (opcional, corta no servidor)
     if (gids.length) pget.groupids = gids;
+    const tagFilter = parseTagFilter(inst.tags); // filtro por tag (opcional, corta no servidor)
+    if (tagFilter.length) { pget.tags = tagFilter; pget.evaltype = 0; } // 0 = E/Ou, o padrao do Zabbix
     problems = await apiCall(base, 'problem.get', pget, token, inst.id);
   } catch (e) {
     const emsg = String((e && e.message) || e);
@@ -687,6 +914,10 @@ async function _pollInstance(inst, _retried) {
   resetBackoff(inst.id); // problem.get respondeu: instancia esta viva, zera o backoff
 
   if (!Array.isArray(problems)) problems = [];
+  // tudo que o problem.get devolveu, ANTES dos filtros do cliente: problema que sai da lista mas
+  // continua aqui esta so ESCONDIDO (host/trigger desabilitado, ack com ignoreAckd, manutencao...),
+  // nao resolvido - nao pode gerar o toast de "Resolvido" pra algo ainda aberto no Zabbix.
+  const openOnServer = new Set(problems.map(p => String(p.eventid)));
 
   const maxAgeMs = (Number(config.maxAgeDays) || 0) * 86400 * 1000;
   let active = problems.filter(p => {
@@ -746,12 +977,15 @@ async function _pollInstance(inst, _retried) {
   // (badgeUnseen). Se usasse p.clock, um problema antigo detectado tarde (poll atrasado, instancia
   // em backoff) nunca contaria como "nao visto" mesmo que o usuario nunca tenha visto ele de fato.
   // Ja conhecido -> mantem o timestamp original. Novo E ja tinha baseline -> "agora" (fresh de
-  // verdade). Novo NA PROPRIA baseline (1o poll, ainda sem state.initialized) -> 0, pra nao inundar
-  // o badge com tudo que ja existia quando a extensao ligou.
+  // verdade). Novo NA PROPRIA baseline -> 0, pra nao inundar o badge com tudo que ja existia.
+  // Baseline e POR INSTANCIA e so conta depois de um poll COM SUCESSO dela: um 1o poll que falhou
+  // (instancia adicionada antes de logar, navegador abrindo antes da rede subir) nao pode gastar o
+  // baseline, senao quando ela finalmente responde tudo que ja existia la dispara como "novo".
+  const baselined = state.initialized && !!state.instBaselined[inst.id];
   const currentMap = new Map(active.map(p => {
     const key = inst.id + ':' + p.eventid;
     const prev = state.known.get(key);
-    const firstSeenTs = prev ? (prev.firstSeenTs || 0) : (state.initialized ? Date.now() : 0);
+    const firstSeenTs = prev ? (prev.firstSeenTs || 0) : (baselined ? Date.now() : 0);
     return [key, {
       name: p.name, host: p.host || '', hostid: p.hostid || '', objectid: p.objectid || '',
       severity: Number(p.severity), instId: inst.id, instLabel: inst.label, firstSeenTs
@@ -760,17 +994,23 @@ async function _pollInstance(inst, _retried) {
 
   // novos e resolvidos
   let fresh = [], resolved = [];
-  if (state.initialized) {
+  if (baselined) {
     // novos e resolvidos por instancia (chave composta instId:eventid). O alerta/badge/snooze/nag
     // sao decididos no agregador (_pollZabbixOnce) sobre o conjunto de TODAS as instancias.
     fresh = active.filter(p => !state.known.has(inst.id + ':' + p.eventid));
     for (const [key, d] of state.known) {
       if (key.startsWith(inst.id + ':') && !currentMap.has(key)) {
-        resolved.push({ eventid: key.split(':')[1], ...d });
+        const eventid = key.split(':')[1];
+        // so escondido (ainda aberto no servidor): sai do known sem notificar "resolvido"
+        if (openOnServer.has(eventid)) continue;
+        resolved.push({ eventid, ...d });
       }
     }
   }
 
+  // este poll deu certo: o proximo ja compara com ele - a menos que o filtro tenha mudado enquanto
+  // o problem.get estava em voo (lista do filtro velho nao serve de baseline pro filtro novo)
+  if (state.filterGen === gen) state.instBaselined[inst.id] = true;
   const instStatus = { state: 'ok', via, label: inst.label, total: active.length, degraded: hostsDegraded };
   return { active, fresh, resolved, currentMap, instStatus };
 }
@@ -784,41 +1024,55 @@ function soundForSeverity(sev) {
 // =====================================================
 // Espelha notifId->url em chrome.storage.session (in-memory, limpo ao fechar o navegador;
 // sobrevive ao sleep do SW). TTL + poda evitam vazamento e mapa infinito.
-function saveNotifUrl(id, url) {
-  state.notifUrls[id] = url; // fast-path em memoria
-  try {
-    chrome.storage.session.get(['notifUrls'], (r) => {
-      const map = r.notifUrls || {};
-      map[id] = { url, ts: Date.now() };
-      const ids = Object.keys(map);
-      if (ids.length > NOTIF_MAX) {
-        ids.sort((a, b) => (map[a].ts || 0) - (map[b].ts || 0));
-        ids.slice(0, ids.length - NOTIF_MAX).forEach(old => delete map[old]);
-      }
-      chrome.storage.session.set({ notifUrls: map });
-    });
-  } catch (e) {}
+// extra = {eventid, instId}: alvo dos botoes da notificacao (ACK / adiar). Sem extra = so a URL.
+// storage.session e ler-alterar-escrever ASSINCRONO: varias notificacoes no mesmo poll liam o
+// MESMO mapa antigo e so a ultima sobrevivia - depois do service worker dormir, os botoes (ACK /
+// adiar) e o clique das outras paravam de funcionar em silencio. Toda escrita passa por esta fila,
+// uma de cada vez; o timeout garante que uma chamada que nunca responde nao trave a fila pra sempre.
+let _notifQueue = Promise.resolve();
+function updateNotifMap(mutate) {
+  _notifQueue = _notifQueue.then(() => new Promise((resolve) => {
+    const guard = setTimeout(resolve, 3000);
+    const done = () => { clearTimeout(guard); resolve(); };
+    try {
+      chrome.storage.session.get(['notifUrls'], (r) => {
+        const map = (r && r.notifUrls) || {};
+        mutate(map);
+        try { chrome.storage.session.set({ notifUrls: map }, done); } catch (e) { done(); }
+      });
+    } catch (e) { done(); }
+  }));
+  return _notifQueue;
 }
 
-async function takeNotifUrl(id) {
+function saveNotifUrl(id, url, extra) {
+  const entry = { url, ...(extra || {}) };
+  state.notifUrls[id] = entry; // fast-path em memoria
+  updateNotifMap((map) => {
+    map[id] = { ...entry, ts: Date.now() };
+    const ids = Object.keys(map);
+    if (ids.length > NOTIF_MAX) {
+      ids.sort((a, b) => (map[a].ts || 0) - (map[b].ts || 0));
+      ids.slice(0, ids.length - NOTIF_MAX).forEach(old => delete map[old]);
+    }
+  });
+}
+
+// {url, eventid?, instId?} da notificacao (memoria primeiro; storage.session se o SW dormiu)
+async function takeNotifTarget(id) {
   if (state.notifUrls[id]) return state.notifUrls[id];
+  await _notifQueue; // uma gravacao ainda na fila tem que entrar antes da leitura
   try {
     const r = await chrome.storage.session.get(['notifUrls']);
     const e = r.notifUrls && r.notifUrls[id];
-    if (e && (Date.now() - (e.ts || 0)) < NOTIF_TTL_MS) return e.url;
+    if (e && (Date.now() - (e.ts || 0)) < NOTIF_TTL_MS) return e;
   } catch (e) {}
   return null;
 }
 
 function dropNotifUrl(id) {
   delete state.notifUrls[id];
-  try {
-    chrome.storage.session.get(['notifUrls'], (r) => {
-      const map = r.notifUrls || {};
-      delete map[id];
-      chrome.storage.session.set({ notifUrls: map });
-    });
-  } catch (e) {}
+  updateNotifMap((map) => { delete map[id]; });
 }
 
 // extraCount: quantos problemas do mesmo lote ficaram de fora do teto MAX_NOTIFS_PER_POLL
@@ -830,18 +1084,23 @@ function notify(p, base, fixedId, extraCount) {
   // fixedId (ex.: 'zbx-nag') reusa a MESMA notificacao a cada ciclo do re-alarme,
   // atualizando no lugar em vez de empilhar uma nova notificacao a cada toque.
   const id = fixedId || ('zbx-' + p.eventid + '-' + Date.now());
+  const op = config.notifOpdata !== false ? String(p.opdata || '').trim() : '';
   const ctx = 'Zabbix NOC Alerter - ' + t('n_click', lang)
     + (extraCount > 0 ? ' - ' + t('and_more', lang).replace('{n}', extraCount) : '');
   chrome.notifications.create(id, {
     type: 'basic',
     iconUrl: 'icons/icon128.png',
     title: '[' + t('nsev' + sev, lang).toUpperCase() + '] ' + (p.host || 'Zabbix'),
-    message: p.name || '(...)',
+    message: (p.name || '(...)') + (op ? ' - ' + op : ''),
     contextMessage: ctx,
     priority: 2,
-    requireInteraction: sev >= 4
+    requireInteraction: sev >= 4,
+    // agir sem abrir o popup: o motivo de existir da extensao e reagir rapido. Desligavel na
+    // Exibicao: um usuario sem permissao de ACK so veria um botao que falha.
+    ...(config.notifButtons !== false ? { buttons: [{ title: t('n_btn_ack', lang) }, { title: t('n_btn_snooze', lang) }] } : {})
   });
-  saveNotifUrl(id, problemUrl(base, p));
+  // base junto do instId: o id pode passar a apontar pra OUTRO Zabbix (instancia removida/renumerada)
+  saveNotifUrl(id, problemUrl(base, p), { eventid: String(p.eventid), instId: p._instId || p.instId || '', base: normalizeUrl(base) });
 }
 
 function notifyResolved(p, base, extraCount) {
@@ -861,13 +1120,96 @@ function notifyResolved(p, base, extraCount) {
   saveNotifUrl(id, problemUrl(base, p));
 }
 
+// ponto cego: fica na tela (requireInteraction) e o clique abre a instancia (pra logar de novo).
+function notifyBlind(inst, s, downMs) {
+  const lang = resolveLang(config.lang);
+  const id = 'zbx-blind-' + inst.id;
+  chrome.notifications.create(id, {
+    type: 'basic',
+    iconUrl: 'icons/icon128.png',
+    title: t('n_blind_t', lang).replace('{inst}', inst.label),
+    message: s.state === 'no-session' ? t('no_session', lang) : String(s.error || t('err', lang)),
+    contextMessage: 'Zabbix NOC Alerter - ' + t('n_blind_ctx', lang).replace('{m}', Math.max(1, Math.round(downMs / 60000))),
+    priority: 2,
+    requireInteraction: true
+  });
+  saveNotifUrl(id, normalizeUrl(inst.url));
+}
+
+// aviso informativo da propria extensao (nao e um problema do Zabbix): id fixo, sem URL.
+function notifyInfo(id, title, message) {
+  chrome.notifications.create(id, {
+    type: 'basic', iconUrl: 'icons/icon128.png', title, message,
+    contextMessage: 'Zabbix NOC Alerter', priority: 1, requireInteraction: false
+  });
+}
+
 chrome.notifications.onClicked.addListener((id) => {
-  takeNotifUrl(id).then((url) => {
-    if (url) chrome.tabs.create({ url });
+  takeNotifTarget(id).then((tg) => {
+    if (tg && tg.url) chrome.tabs.create({ url: tg.url });
     chrome.notifications.clear(id);
     dropNotifUrl(id);
   });
 });
+
+// Botoes da notificacao: 0 = ACK (mesmo caminho do popup, com a mensagem padrao), 1 = adiar 15 min
+// (o mesmo snooze individual do popup). Falha no ACK vira um aviso com o erro do Zabbix, e a
+// notificacao original fica, em vez de sumir calada.
+const NOTIF_SNOOZE_MS = 15 * 60 * 1000;
+
+// Instancia dona do problema de uma notificacao: mesmo id E mesma URL; se o id agora aponta pra outro
+// Zabbix (instancia removida e as outras renumeradas), acha pela URL. Eventids sao sequenciais em
+// todo servidor, entao mandar o ACK pelo id "errado" acertaria o evento de mesmo numero de OUTRO Zabbix.
+function resolveNotifInst(tg) {
+  const list = config.instances || [];
+  const byId = list.find(i => i.id === tg.instId);
+  if (!tg.base) return byId || null; // alvo gravado antes de existir o campo base
+  if (byId && normalizeUrl(byId.url) === tg.base) return byId;
+  return list.find(i => normalizeUrl(i.url) === tg.base) || null;
+}
+
+if (chrome.notifications.onButtonClicked) chrome.notifications.onButtonClicked.addListener((id, idx) => {
+  takeNotifTarget(id).then(async (tg) => {
+    if (!tg || !tg.eventid || !tg.instId) { chrome.notifications.clear(id); return; }
+    const lang = resolveLang(config.lang);
+    const inst = resolveNotifInst(tg);
+    if (!inst) { notifyInfo('zbx-ackerr-' + tg.eventid, idx === 0 ? t('n_ack_fail', lang) : t('n_snz_fail', lang), t('n_inst_gone', lang)); return; }
+    if (idx === 0) {
+      const r = await ackEventCore(inst.id, tg.eventid, '');
+      if (r.ok) { chrome.notifications.clear(id); dropNotifUrl(id); pollZabbix(); }
+      else notifyInfo('zbx-ackerr-' + tg.eventid, t('n_ack_fail', lang), String(r.error || ''));
+      return;
+    }
+    state.snoozes[inst.id + ':' + tg.eventid] = Date.now() + NOTIF_SNOOZE_MS;
+    saveSnoozes();
+    chrome.notifications.clear(id);
+    dropNotifUrl(id);
+    pollZabbix();
+  });
+});
+
+// ACK de um evento - popup e botao da notificacao usam este mesmo caminho. Retorna {ok, error}.
+async function ackEventCore(instId, eventid, message) {
+  const lang = resolveLang(config.lang);
+  const inst = (config.instances || []).find(i => i.id === instId);
+  if (!inst) return { ok: false, error: 'Instance not found' };
+  try {
+    const base = normalizeUrl(inst.url);
+    const { token } = await getInstAuth(inst);
+    if (!token) return { ok: false, error: t('e_nocred', lang) };
+    const r = await apiCall(base, 'event.acknowledge', {
+      eventids: [String(eventid)], action: 6, message: message || t('ack_msg', lang)
+    }, token, inst.id);
+    console.log('[zbx] ack OK', eventid, 'inst:', inst.label, r);
+    return { ok: true };
+  } catch (e) {
+    const emsg = String((e && e.message) || e || t('failed', lang));
+    // sessionid do user.login expirado: invalida o cache pro proximo ack/poll re-logar
+    if (instAuthType(inst) === 'password' && AUTH_ERR_RE.test(emsg)) delete state.loginTokens[inst.id];
+    console.error('[zbx] ack FALHOU', eventid, emsg);
+    return { ok: false, error: emsg };
+  }
+}
 
 // =====================================================
 // Offscreen audio (MV3: service worker nao toca som)
@@ -948,17 +1290,43 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return true;
   }
 
+  if (msg.action === 'importConfig') {
+    // mesmo caminho do setConfig, mas preservando as credenciais locais (mergeImportedConfig)
+    msg = { action: 'setConfig', config: mergeImportedConfig(config, msg.config) };
+  }
+
   if (msg.action === 'setConfig') {
     const oldFilterSig = filterSignature(config);
+    // conexao da instancia (URL, modo, credencial, ligada): se mudou, a queda anterior nao vale mais
+    // pro ponto cego - corrigiu e continua cego = avisa de novo depois de N min. Salvar volume ou
+    // idioma nao mexe nisso (senao re-avisaria a cada save com uma instancia fora).
+    const connSig = (i) => JSON.stringify([normalizeUrl(i.url), instAuthType(i), i.token || '', i.username || '', i.password || '', !!i.enabled]);
+    const oldConn = new Map((config.instances || []).map(i => [i.id, connSig(i)]));
+    const oldUrl = new Map((config.instances || []).map(i => [i.id, normalizeUrl(i.url)]));
     config = { ...DEFAULT_CONFIG, ...config, ...(msg.config || {}) };
     config = migrateConfig(config);
     saveConfig();
+    (config.instances || []).forEach(i => {
+      // conexao mudou (ex.: a URL agora aponta pra um 6.x): o modo de auth aprendido nao vale mais
+      // a notificacao fixa de "cego" falava da conexao antiga: fecha (continua cego = novo aviso em N min)
+      if (oldConn.get(i.id) !== connSig(i)) {
+        if (state.blindAlerted[i.id]) chrome.notifications.clear('zbx-blind-' + i.id);
+        delete state.downSince[i.id]; delete state.blindAlerted[i.id]; delete state.authModes[i.id];
+      }
+      // a URL agora e OUTRO Zabbix: a ultima lista conhecida (reusada pelo carry-forward enquanto o
+      // novo nao responde) e o baseline eram do servidor antigo. Sem isto o popup mostrava e o nag
+      // re-alarmava problemas do antigo com link/ACK apontando pro novo (eventids iguais = outro evento).
+      if (oldUrl.has(i.id) && oldUrl.get(i.id) !== normalizeUrl(i.url)) {
+        delete state.lastActive[i.id]; delete state.instBaselined[i.id];
+      }
+    });
     // Limpar instStatus de instancias removidas
     const validIds = new Set((config.instances || []).map(i => i.id));
     Object.keys(state.instStatus).forEach(id => { if (!validIds.has(id)) delete state.instStatus[id]; });
     Object.keys(state.authModes).forEach(id => { if (!validIds.has(id)) delete state.authModes[id]; });
     Object.keys(state.groupCache).forEach(id => { if (!validIds.has(id)) delete state.groupCache[id]; });
     Object.keys(state.lastActive).forEach(id => { if (!validIds.has(id)) delete state.lastActive[id]; });
+    Object.keys(state.instBaselined).forEach(id => { if (!validIds.has(id)) delete state.instBaselined[id]; });
     state.loginTokens = {};     // credenciais podem ter mudado -> re-login no proximo poll
     state.instBackoff = {};     // config mudou (url/credencial/etc.) -> vale tentar de novo ja no proximo poll
     state.workPeriodCache = {}; // re-le o work_period apos mudanca de config (instancias/opcao)
@@ -966,7 +1334,16 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     // exclude, host group, instancias). Salvar uma opcao sem relacao (som, idioma...) nao pode fazer
     // um problema que apareceu bem naquela hora ser adotado como "ja conhecido" e nunca alertar.
     if (filterSignature(config) !== oldFilterSig) {
+      state.filterGen++;
       state.initialized = false;
+      // re-baseia so quem esta RESPONDENDO (o poll deste proprio setConfig faz isso agora). Uma
+      // instancia cega mantem o baseline que o carry-forward segura: zerar o dela faria um desastre
+      // que chegou durante a queda ser adotado calado como "ja existia" quando ela voltar. Custo
+      // aceito: o que so ficou visivel pelo filtro novo nessa instancia alerta como novo na volta.
+      Object.keys(state.instBaselined).forEach(id => {
+        const s = state.instStatus[id];
+        if (!s || s.state === 'ok') delete state.instBaselined[id];
+      });
       state.lastAlarmTs = 0;
     }
     scheduleAlarm();
@@ -976,7 +1353,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   }
 
   if (msg.action === 'getStatus') {
-    sendResponse({ status: state.status, muted: config.muted });
+    sendResponse({ status: state.status, muted: isMutedNow(Date.now()), mutedUntil: Number(config.mutedUntil) || 0 });
     // status velho (SW acordou agora / 1o poll falhou com a rede subindo) -> ja dispara um poll;
     // o popup tambem re-consulta sozinho quando percebe que o status esta vencido.
     const staleMs = Math.max(MIN_POLL_SEC, Number(config.pollInterval) || 15) * 2 * 1000;
@@ -994,10 +1371,32 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   }
 
   if (msg.action === 'setMuted') {
-    config.muted = !!msg.muted;
+    // minutes > 0 = mudo com tempo; untilTs = ate um horario (fim do turno); nenhum = ate reativar
+    const mins = Number(msg.minutes) || 0, until = Number(msg.untilTs) || 0;
+    // "ate as HH:MM" com o horario ja passado (menu do popup aberto ate o turno acabar): nao ha o que
+    // silenciar. Antes caia em mutedUntil 0 = mudo INDEFINIDO, o oposto do que foi pedido.
+    const expiredUntil = msg.untilTs != null && !(mins > 0) && until <= Date.now();
+    const wasMuted = !!config.muted;
+    if (!msg.muted) state.pendingWoke.clear(); // desmutar na mao: o operador esta olhando (o nag lembra)
+    config.muted = !!msg.muted && !expiredUntil;
+    config.mutedUntil = !config.muted ? 0 : (mins > 0 ? Date.now() + mins * 60000 : (until > Date.now() ? until : 0));
+    // inicio do mudo: trocar so a duracao de um mudo ja ativo mantem o inicio original
+    config.mutedAt = !config.muted ? 0 : (wasMuted && config.mutedAt ? config.mutedAt : Date.now());
     saveConfig();
-    sendResponse({ ok: true, muted: config.muted });
+    sendResponse({ ok: true, muted: config.muted, mutedUntil: config.mutedUntil });
     return;
+  }
+
+  if (msg.action === 'getShiftEnd') {
+    // "mudo ate o fim do turno": fim do segmento atual do work_period (uniao das instancias
+    // legiveis = o mais tarde). Sem work_period legivel ou fora do horario -> null (popup esconde).
+    (async () => {
+      const { list } = await getWorkPeriods(enabledInstances(config));
+      const now = new Date();
+      const ends = list.map(i => workPeriodEnd(i.period, now)).filter(Boolean);
+      sendResponse({ untilTs: ends.length ? Math.max(...ends.map(d => d.getTime())) : null });
+    })();
+    return true;
   }
 
   if (msg.action === 'getWorkPeriod') {
@@ -1020,27 +1419,10 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   }
 
   if (msg.action === 'ackEvent') {
-    (async () => {
-      const inst = (config.instances || []).find(i => i.id === msg.instId);
-      if (!inst) { sendResponse({ ok: false, error: 'Instance not found' }); return; }
-      try {
-        const base = normalizeUrl(inst.url);
-        const { token } = await getInstAuth(inst);
-        if (!token) { sendResponse({ ok: false, error: t('e_nocred', resolveLang(config.lang)) }); return; }
-        const r = await apiCall(base, 'event.acknowledge', {
-          eventids: [String(msg.eventid)], action: 6, message: msg.message || t('ack_msg', resolveLang(config.lang))
-        }, token, inst.id);
-        console.log('[zbx] ack OK', msg.eventid, 'inst:', inst.label, r);
-        sendResponse({ ok: true });
-        pollZabbix();
-      } catch (e) {
-        const emsg = String((e && e.message) || e || t('failed', resolveLang(config.lang)));
-        // sessionid do user.login expirado: invalida o cache pro proximo ack/poll re-logar
-        if (instAuthType(inst) === 'password' && AUTH_ERR_RE.test(emsg)) delete state.loginTokens[inst.id];
-        console.error('[zbx] ack FALHOU', msg.eventid, e);
-        sendResponse({ ok: false, error: emsg });
-      }
-    })();
+    ackEventCore(msg.instId, msg.eventid, msg.message).then((r) => {
+      sendResponse(r);
+      if (r.ok) pollZabbix();
+    });
     return true;
   }
 
@@ -1056,6 +1438,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         token: msg.apiToken || '', username: msg.username || '', password: msg.password || ''
       };
       delete state.loginTokens[instId]; // teste sempre re-loga (credenciais podem ter mudado)
+      delete state.authModes[instId];   // e re-descobre header/corpo: o teste anterior pode ter sido em outro servidor
       let token = null, via = instAuthType(inst);
       try {
         ({ token, via } = await getInstAuth(inst));

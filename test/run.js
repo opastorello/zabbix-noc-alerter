@@ -18,6 +18,7 @@ function eq(a, b, label) { assert(JSON.stringify(a) === JSON.stringify(b), label
 // ---------- capturas de efeitos (som/notificacao/badge) ----------
 let captured = { sounds: [], notifs: [], cleared: [], badge: null };
 function resetCaptures() { captured = { sounds: [], notifs: [], cleared: [], badge: null }; }
+let notifButtonListener = null, notifClickListener = null, openedTabs = [];
 
 // ---------- cenario do Zabbix (controlado por teste) ----------
 // login: {user, pass, sid} habilita o user.login; requireSid: problem.get exige o sid atual
@@ -41,22 +42,23 @@ const chrome = {
   },
   action: { setBadgeText: ({ text }) => { captured.badge = text; }, setBadgeBackgroundColor: () => {} },
   notifications: {
-    create: (id, opts) => { captured.notifs.push({ id, title: opts && opts.title, message: opts && opts.message, contextMessage: opts && opts.contextMessage }); },
+    create: (id, opts) => { captured.notifs.push({ id, title: opts && opts.title, message: opts && opts.message, contextMessage: opts && opts.contextMessage, buttons: opts && opts.buttons }); },
     clear: (id) => { captured.cleared.push(id); },
-    onClicked: { addListener: () => {} }, onClosed: { addListener: () => {} },
+    onClicked: { addListener: (fn) => { notifClickListener = fn; } }, onClosed: { addListener: () => {} },
+    onButtonClicked: { addListener: (fn) => { notifButtonListener = fn; } },
   },
   runtime: {
     getManifest: () => ({ version: '0.0.0' }),
     onMessage: { addListener: (fn) => { messageListener = fn; } },
     onStartup: { addListener: () => {} }, onInstalled: { addListener: () => {} },
-    sendMessage: () => {}, lastError: null,
+    sendMessage: () => Promise.resolve(), lastError: null, // MV3: sem callback devolve Promise (o .catch do background depende disso)
   },
   alarms: { create: () => {}, clear: () => {}, onAlarm: { addListener: () => {} }, get: (_n, cb) => cb && cb(null) },
   cookies: {
     get: async ({ name }) => (name === 'zbx_session' && scenario.cookie) ? { name, value: scenario.cookie } : null,
     getAll: async () => scenario.cookie ? [{ name: 'zbx_session', value: scenario.cookie }] : [],
   },
-  tabs: { query: async ({ url }) => scenario.meetTabs.filter(u => String(url) === 'https://meet.google.com/*' && u.startsWith('https://meet.google.com/')).map(u => ({ url: u })) },
+  tabs: { create: (o) => { openedTabs.push(o); }, query: async ({ url }) => scenario.meetTabs.filter(u => String(url) === 'https://meet.google.com/*' && u.startsWith('https://meet.google.com/')).map(u => ({ url: u })) },
   offscreen: { hasDocument: async () => true, createDocument: async () => {}, closeDocument: async () => {} },
 };
 
@@ -68,6 +70,14 @@ async function fetchMock(url, opts) {
   const auth = String(hdrs['Authorization'] || '').replace('Bearer ', '') || body.auth || null;
   const errResp = (message, data) => ({ status: 200, json: async () => ({ jsonrpc: '2.0', error: { message, data }, id: 1 }) });
   let result;
+  // Zabbix 7.2+/8.0: o parametro 'auth' no corpo nao existe mais (erro de schema, antes da credencial)
+  if (scenario.rejectBodyAuth && body.auth !== undefined) {
+    scenario.bodyAuthCalls = (scenario.bodyAuthCalls || 0) + 1;
+    return { status: 200, json: async () => ({ jsonrpc: '2.0', error: { code: -32600, message: 'Invalid request.', data: 'Invalid parameter "/": unexpected parameter "auth".' }, id: 1 }) };
+  }
+  // Zabbix 6.x: nao conhece o header Bearer (so o 'auth' no corpo)
+  if (scenario.rejectHeaderAuth && hdrs['Authorization'] && body.method !== 'apiinfo.version' && body.method !== 'user.login') return errResp('Invalid params.', 'Not authorized.');
+  if (scenario.badToken && auth === scenario.badToken && body.method !== 'apiinfo.version' && body.method !== 'user.login') return errResp('Invalid params.', 'Session terminated, re-login, please.');
   if (body.method === 'apiinfo.version') result = scenario.version;
   else if (body.method === 'user.login') {
     if (auth) return errResp('Invalid params.', 'user.login nao aceita autorizacao'); // metodo publico
@@ -92,7 +102,11 @@ async function fetchMock(url, opts) {
     const ids = ((body.params && body.params.triggerids) || []).filter(id => !scenario.hiddenTriggers.includes(id));
     result = ids.map(id => ({ triggerid: id, status: scenario.disabledTriggers.includes(id) ? '1' : '0', hosts: [{ hostid: 'h' + id, name: 'host-' + id, status: scenario.disabledHosts.includes('h' + id) ? '1' : '0' }] }));
   }
-  else if (body.method === 'event.acknowledge') result = { eventids: body.params.eventids };
+  else if (body.method === 'event.acknowledge') {
+    scenario.ackCalls = scenario.ackCalls || []; scenario.ackCalls.push({ base, params: body.params });
+    if (scenario.ackError) return errResp(scenario.ackError, '');
+    result = { eventids: body.params.eventids };
+  }
   else if (body.method === 'settings.get') {
     if (scenario.workPeriod === null) return { status: 200, json: async () => ({ jsonrpc: '2.0', error: { message: 'No permissions', data: 'settings.get negado' }, id: 1 }) };
     result = { work_period: scenario.workPeriod || '' };
@@ -111,10 +125,34 @@ const sandbox = {
 sandbox.self = sandbox;
 vm.createContext(sandbox);
 vm.runInContext(i18nSrc, sandbox, { filename: 'i18n.js' });
-const bridge = '\n;globalThis.__bg = { getConfig:()=>config, getState:()=>state, setPlaySpy:(fn)=>{ playSound = fn; } };';
+const bridge = '\n;globalThis.__bg = { getConfig:()=>config, getState:()=>state, getDefaults:()=>DEFAULT_CONFIG, setPlaySpy:(fn)=>{ playSound = fn; } };';
 vm.runInContext(bgSrc + bridge, sandbox, { filename: 'background.js' });
 const BG = sandbox.__bg;
 BG.setPlaySpy((preset, vol) => { captured.sounds.push({ preset, vol }); return Promise.resolve(); });
+
+// ---------- popup.js real (as funcoes; o DOM e um duble minimo) ----------
+// Monta a linha (renderList) sem navegador: getElementById devolve um elemento falso que guarda o
+// innerHTML e o teste le o HTML montado. Nao valida layout/CSS - isso continua sendo ao vivo.
+const popupSrc = fs.readFileSync(path.join(ROOT, 'popup.js'), 'utf8');
+const popEls = {};
+const popSaved = []; // chrome.storage.local.set do popup (visao salva)
+function fakeEl() { return { innerHTML: '', textContent: '', value: '', style: {}, dataset: {}, className: '', classList: { add() {}, remove() {}, toggle() {}, contains: () => false }, addEventListener() {}, querySelectorAll: () => [], querySelector: () => null, setAttribute() {}, getAttribute: () => null }; }
+const popEl = (id) => popEls[id] || (popEls[id] = fakeEl());
+const popSandbox = {
+  console, setTimeout, clearTimeout, setInterval: () => 0, navigator: { language: 'pt-BR' },
+  document: { addEventListener() {}, getElementById: popEl, querySelector: popEl, querySelectorAll: () => [], documentElement: {},
+    // esc() usa div.textContent -> innerHTML; o navegador serializa texto escapando so & < > (e nbsp)
+    createElement: () => { let txt = ''; return { set textContent(v) { txt = String(v); }, get innerHTML() { return txt.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/ /g, '&nbsp;'); } }; } },
+  chrome: { runtime: { sendMessage() {}, getManifest: () => ({ version: '0.0.0' }), openOptionsPage() {} }, storage: { local: { get() {}, set(o) { popSaved.push(JSON.parse(JSON.stringify(o))); } } } },
+};
+vm.createContext(popSandbox);
+vm.runInContext(i18nSrc, popSandbox, { filename: 'i18n.js' });
+vm.runInContext(popupSrc + '\n;globalThis.__pop = { setDisp: (c) => { disp = displayOpts(c); }, getSevFilter: () => sevFilter, setSevFilter: (v) => { sevFilter = v; } };', popSandbox, { filename: 'popup.js' });
+// HTML da linha de UM problema com estas opcoes de exibicao (config parcial; o resto no padrao)
+function popRow(p, c) {
+  try { popSandbox.__pop.setDisp(c || {}); popSandbox.renderList([p], false, 'none'); return popEl('list').innerHTML; }
+  catch (e) { return 'ERRO: ' + e.message; }
+}
 
 // ---------- helpers de integracao ----------
 function send(msg) { return new Promise(res => { const r = messageListener(msg, {}, res); if (r !== true) res(undefined); }); }
@@ -123,7 +161,7 @@ const poll = async () => { resetCaptures(); await send({ action: 'pollNow' }); }
 const status = () => BG.getState().status;
 const knownKeys = () => [...BG.getState().known.keys()].sort();
 const probByEvent = (instId, ev) => (status().problems || []).find(p => p.instId === instId && p.eventid === ev);
-function P(ev, sev, x = {}) { return { eventid: String(ev), objectid: 't' + ev, name: x.name || ('p' + ev), severity: String(sev), clock: String(x.clock || 1700000000), acknowledged: x.acknowledged || '0', suppressed: x.suppressed || '0', suppression_data: x.suppression_data || [], acknowledges: x.acknowledges || [] }; }
+function P(ev, sev, x = {}) { return { eventid: String(ev), objectid: 't' + ev, name: x.name || ('p' + ev), severity: String(sev), clock: String(x.clock || 1700000000), acknowledged: x.acknowledged || '0', suppressed: x.suppressed || '0', suppression_data: x.suppression_data || [], acknowledges: x.acknowledges || [], opdata: x.opdata || '', tags: x.tags || [] }; }
 
 (async () => {
   // =================================================================
@@ -184,6 +222,26 @@ function P(ev, sev, x = {}) { return { eventid: String(ev), objectid: 't' + ev, 
   assert(sandbox.inWorkPeriod('', qua10) === true, 'inWorkPeriod: vazio = sempre dentro (fail-open)');
   assert(sandbox.inWorkPeriod('lixo-invalido', qua10) === true, 'inWorkPeriod: formato invalido = fail-open');
   assert(sandbox.inWorkPeriod('1-7,00:00-24:00', dom10) === true, 'inWorkPeriod: 00:00-24:00 cobre o dia todo');
+
+  // alertGate / canAlert: precedencia de silencio num lugar so
+  const G = (kind, ctx, cfgOver) => { const c = BG.getConfig(); const saved = { ...c }; Object.assign(c, { soundEnabled: true, notificationsEnabled: true, notifyResolved: true, nagNotify: true, meetSuppressSound: true, meetSuppressNotif: true }, cfgOver || {}); const g = sandbox.alertGate(kind, ctx); Object.keys(c).forEach(k => delete c[k]); Object.assign(c, saved); return [g.sound, g.notif]; };
+  const C0 = { muted: false, offHours: false, inMeeting: false };
+  eq(G('fresh', C0), [true, true], 'alertGate: sem nada ativo, novo toca e notifica');
+  eq(G('fresh', { ...C0, muted: true }), [false, false], 'alertGate: mudo bloqueia tudo');
+  eq(sandbox.alertGate('fresh', { ...C0, muted: true }).muted, true, 'alertGate: mudo marca muted=true (chamador pula ate o nag)');
+  eq(G('fresh', { ...C0, offHours: true }), [false, false], 'alertGate: fora do horario bloqueia som e notificacao');
+  eq(G('fresh', { ...C0, inMeeting: true }, { meetSuppressSound: true, meetSuppressNotif: false }), [false, true], 'alertGate: reuniao so com som suprimido');
+  eq(G('fresh', { ...C0, inMeeting: true }, { meetSuppressSound: false, meetSuppressNotif: true }), [true, false], 'alertGate: reuniao so com notificacao suprimida');
+  eq(G('fresh', C0, { soundEnabled: false }), [false, true], 'alertGate: opcao de som desligada');
+  eq(G('resolved', C0), [false, true], 'alertGate: resolvido nunca toca som, so notifica');
+  eq(G('resolved', C0, { notifyResolved: false }), [false, false], 'alertGate: resolvido respeita notifyResolved');
+  eq(G('resolved', { ...C0, muted: true }), [false, false], 'alertGate: resolvido respeita o mudo');
+  eq(G('nag', C0, { nagNotify: false }), [true, false], 'alertGate: nag sem nagNotify = so som');
+  const maintP = { eventid: '1', _instId: 'x', acknowledged: '0', suppression_data: [{ maintenanceid: '3' }] };
+  const ackP = { eventid: '2', _instId: 'x', acknowledged: '1', suppression_data: [] };
+  ['fresh', 'woke', 'nag'].forEach(k => assert(sandbox.canAlert(maintP, k) === false, 'canAlert: manutencao nunca alerta (' + k + ')'));
+  assert(sandbox.canAlert(ackP, 'fresh') === true, 'canAlert: ackado ainda alerta como novo');
+  assert(sandbox.canAlert(ackP, 'woke') === false && sandbox.canAlert(ackP, 'nag') === false, 'canAlert: ackado nao re-alerta (fim de snooze, nag)');
 
   // resolveLang
   eq(sandbox.resolveLang('en'), 'en', 'resolveLang: idioma valido');
@@ -395,6 +453,269 @@ function P(ev, sev, x = {}) { return { eventid: String(ev), objectid: 't' + ev, 
   scenario.byBase['https://z1'] = [];
   await poll();
   assert(captured.notifs.some(n => /resolv|recuper|resolved/i.test(n.title + ' ' + n.message)), 'problema que some gera notificacao de resolvido');
+
+  console.log('\n--- Integracao: problema so ESCONDIDO (ainda aberto no Zabbix) nao vira "resolvido" ---');
+  // host desabilitado (#27), trigger desabilitado (#25), ack com ignoreAckd, manutencao com
+  // ignoreMaintenance: o problem.get continua devolvendo o problema, a extensao so deixa de mostrar.
+  const isResolvedNotif = (n) => /resolv|recuper|resolved/i.test(n.title + ' ' + n.message);
+  scenario.byBase = { 'https://zHid': [P(310, 5), P(311, 4), P(312, 4), P(313, 4), P(314, 3)], 'https://z2': [] };
+  await setConfig({ instances: [{ id: 'instHid', label: 'PRD', url: 'https://zHid', token: 't1', enabled: true }], minSeverity: 0, notifyResolved: true, notificationsEnabled: true, repeatAlarm: false, muted: false, suppressDuringMeeting: false, ignoreAckd: true, ignoreMaintenance: true });
+  await poll(); // baseline: os 5 visiveis
+  scenario.disabledHosts = ['ht311'];          // host do 311 desabilitado
+  scenario.disabledTriggers = ['t312'];        // trigger do 312 desabilitado
+  scenario.byBase['https://zHid'][3] = P(313, 4, { acknowledged: '1' });                        // 313 ackado (ignoreAckd)
+  scenario.byBase['https://zHid'][4] = P(314, 3, { suppressed: '1', suppression_data: [{ maintenanceid: '7' }] }); // 314 entrou em manutencao
+  await poll();
+  eq((status().problems || []).map(p => p.eventid).sort(), ['310'], 'os 4 escondidos somem da lista (comportamento mantido)');
+  eq(captured.notifs.filter(isResolvedNotif).length, 0, 'nenhum toast de "resolvido" pra problema que continua aberto no Zabbix');
+  scenario.disabledHosts = []; scenario.disabledTriggers = [];
+  // e o resolvido de verdade continua notificando
+  scenario.byBase['https://zHid'] = [];
+  await poll();
+  assert(captured.notifs.some(isResolvedNotif), 'problema que sai do problem.get (resolvido de verdade) continua gerando o toast');
+
+  console.log('\n--- Integracao: opdata do problema chega no popup ---');
+  scenario.byBase = { 'https://zOp': [P(330, 4, { opdata: 'CPU 97%' }), P(331, 3)], 'https://z2': [] };
+  await setConfig({ instances: [{ id: 'instOp', label: 'PRD', url: 'https://zOp', token: 't1', enabled: true }], minSeverity: 0, repeatAlarm: false });
+  await poll();
+  assert((scenario.lastProblemGet['https://zOp'].output || []).includes('opdata'), 'problem.get pede o campo opdata');
+  eq(probByEvent('instOp', '330').opdata, 'CPU 97%', 'opdata vai junto no status do problema');
+  eq(probByEvent('instOp', '331').opdata, '', 'sem opdata = string vazia (popup nao mostra nada)');
+  scenario.byBase['https://zOp'].push(P(332, 5, { name: 'Disk full', opdata: 'free 2%' }), P(333, 5, { name: 'Sem valor' }));
+  await poll();
+  assert(captured.notifs.some(n => n.message === 'Disk full - free 2%'), 'notificacao de problema novo mostra o opdata junto do nome');
+  assert(captured.notifs.some(n => n.message === 'Sem valor'), 'sem opdata a notificacao fica so com o nome');
+
+  console.log('\n--- Integracao: ACK e adiar direto pelos botoes da notificacao ---');
+  const tick = (ms = 30) => new Promise(r => setTimeout(r, ms));
+  scenario.byBase = { 'https://zBtn': [P(340, 4)], 'https://zBtn2': [] };
+  await setConfig({ instances: [
+    { id: 'instB1', label: 'PRD', url: 'https://zBtn', token: 't1', enabled: true },
+    { id: 'instB2', label: 'HML', url: 'https://zBtn2', token: 't2', enabled: true },
+  ], minSeverity: 0, repeatAlarm: false, muted: false, notificationsEnabled: true, soundEnabled: true });
+  await poll();
+  scenario.byBase['https://zBtn2'].push(P(341, 5, { name: 'vai levar ack' }), P(342, 4, { name: 'vai ser adiado' }));
+  await poll();
+  const nAck = captured.notifs.find(n => n.message === 'vai levar ack');
+  const nSnz = captured.notifs.find(n => n.message === 'vai ser adiado');
+  assert(nAck && Array.isArray(nAck.buttons) && nAck.buttons.length === 2, 'notificacao de problema novo tem 2 botoes (ACK, adiar)');
+  assert(typeof notifButtonListener === 'function', 'background registra onButtonClicked');
+  scenario.ackCalls = [];
+  notifButtonListener(nAck.id, 0); await tick(80);
+  eq(scenario.ackCalls.map(c => [c.base, c.params.eventids]), [['https://zBtn2', ['341']]], 'botao 0 = ACK do evento certo, na instancia certa');
+  assert(scenario.ackCalls[0] && scenario.ackCalls[0].params.action === 6 && !!scenario.ackCalls[0].params.message, 'ACK pela notificacao manda ack + mensagem padrao');
+  assert(captured.cleared.includes(nAck.id), 'ACK ok fecha a notificacao');
+  notifButtonListener(nSnz.id, 1); await tick(80);
+  const snzUntil = BG.getState().snoozes['instB2:342'] || 0;
+  assert(Math.abs(snzUntil - (Date.now() + 15 * 60000)) < 5000, 'botao 1 = adia o problema por 15 min (chave instId:eventid)');
+  assert(captured.cleared.includes(nSnz.id), 'adiar fecha a notificacao');
+  // ACK que falha avisa, em vez de sumir calado
+  scenario.byBase['https://zBtn2'].push(P(343, 5, { name: 'ack vai falhar' }));
+  await poll();
+  const nFail = captured.notifs.find(n => n.message === 'ack vai falhar');
+  scenario.ackError = 'No permissions to referred object or it does not exist!';
+  resetCaptures();
+  notifButtonListener(nFail.id, 0); await tick(80);
+  assert(captured.notifs.some(n => /No permissions/.test(n.message || '')), 'ACK que falha mostra o erro do Zabbix numa notificacao');
+  scenario.ackError = null;
+  // clique no corpo continua abrindo o evento
+  openedTabs = [];
+  notifClickListener(nFail.id); await tick(30);
+  assert(openedTabs.some(o => /eventid=343/.test(o.url)), 'clique no corpo da notificacao continua abrindo o evento');
+
+  console.log('\n--- Tags: filtro por instancia (servidor) + tags no status ---');
+  eq(sandbox.parseTagFilter(''), [], 'parseTagFilter: vazio = sem filtro');
+  eq(sandbox.parseTagFilter('service:web, env=prod\nteam'), [
+    { tag: 'service', value: 'web', operator: 0 }, { tag: 'env', value: 'prod', operator: 1 }, { tag: 'team', value: '', operator: 4 },
+  ], 'parseTagFilter: tag:valor = contem (0), tag=valor = igual (1), so tag = existe (4)');
+  eq(sandbox.parseTagFilter(' url : http://x:8080 '), [{ tag: 'url', value: 'http://x:8080', operator: 0 }], 'parseTagFilter: so o 1o ":" separa (valor pode ter ":")');
+  eq(sandbox.parseTagFilter(', ,:x,=y'), [], 'parseTagFilter: entradas sem nome de tag sao ignoradas');
+  scenario.byBase = { 'https://zTag': [P(360, 4, { tags: [{ tag: 'service', value: 'web' }, { tag: 'team', value: 'noc' }] }), P(361, 3)], 'https://z2': [] };
+  await setConfig({ instances: [{ id: 'instTag', label: 'PRD', url: 'https://zTag', token: 't1', enabled: true, tags: 'service:web, env=prod' }], minSeverity: 0, repeatAlarm: false, muted: false });
+  await poll();
+  const tagGet = scenario.lastProblemGet['https://zTag'];
+  eq(tagGet.tags, [{ tag: 'service', value: 'web', operator: 0 }, { tag: 'env', value: 'prod', operator: 1 }], 'problem.get recebe o filtro de tags da instancia (corta no servidor)');
+  eq(tagGet.evaltype, 0, 'evaltype 0 (E/Ou: mesma tag = OU, tags diferentes = E), igual ao padrao do Zabbix');
+  assert(Array.isArray(tagGet.selectTags) && tagGet.selectTags.includes('tag') && tagGet.selectTags.includes('value'), 'problem.get pede as tags de cada problema (selectTags)');
+  eq(probByEvent('instTag', '360').tags, [{ tag: 'service', value: 'web' }, { tag: 'team', value: 'noc' }], 'tags vao no status do problema (popup mostra os chips)');
+  eq(probByEvent('instTag', '361').tags, [], 'problema sem tag = lista vazia');
+  await setConfig({ instances: [{ id: 'instTag', label: 'PRD', url: 'https://zTag', token: 't1', enabled: true, tags: '' }] });
+  await poll();
+  assert(scenario.lastProblemGet['https://zTag'].tags === undefined, 'sem filtro de tags: nao manda o parametro tags');
+  // mudar o filtro de tags muda o conjunto visivel -> re-baseline (problema recem-visivel nao alerta como novo)
+  scenario.byBase['https://zTag'].push(P(362, 5, { name: 'ja existia, so ficou visivel' }));
+  resetCaptures();
+  await setConfig({ instances: [{ id: 'instTag', label: 'PRD', url: 'https://zTag', token: 't1', enabled: true, tags: 'team' }] }); // o poll do proprio setConfig e o que alertaria
+  assert(!captured.sounds.length && !captured.notifs.length, 'trocar o filtro de tags re-baseia: problema que so ficou visivel nao alerta');
+
+  console.log('\n--- Zabbix 7.2+/8.0: sem "auth" no corpo, erro de credencial limpo ---');
+  scenario.rejectBodyAuth = true; scenario.badToken = 'tok-ruim'; scenario.bodyAuthCalls = 0;
+  scenario.byBase = { 'https://z80': [P(370, 4)], 'https://z2': [] };
+  await setConfig({ instances: [{ id: 'inst80', label: 'Z80', url: 'https://z80', authType: 'token', token: 'tok-ruim', enabled: true }], minSeverity: 0, repeatAlarm: false, blindSpotAlert: false });
+  const err80 = BG.getState().instStatus.inst80 || {};
+  eq([err80.state, err80.error], ['error', 'Session terminated, re-login, please.'], 'erro mostrado e o da credencial, sem o "unexpected parameter auth" do corpo misturado');
+  const bodyAfterFirst = scenario.bodyAuthCalls;
+  BG.getState().instBackoff = {}; await poll();
+  eq(scenario.bodyAuthCalls, bodyAfterFirst, 'servidor sem auth no corpo e lembrado: nao tenta o corpo de novo a cada poll');
+  // token bom no mesmo servidor: header funciona normal
+  await setConfig({ instances: [{ id: 'inst80', label: 'Z80', url: 'https://z80', authType: 'token', token: 'tok-bom', enabled: true }] });
+  eq((BG.getState().instStatus.inst80 || {}).state, 'ok', 'token valido no 8.0 (so header) funciona');
+  scenario.rejectBodyAuth = false; scenario.badToken = null;
+  // e o 6.x (sem Bearer) continua caindo pro corpo: outro servidor, outra instancia
+  await setConfig({ instances: [{ id: 'inst60', label: 'Z60', url: 'https://z60', authType: 'token', token: 'tok60', enabled: true }], blindSpotAlert: true });
+  eq((BG.getState().instStatus.inst60 || {}).state, 'ok', 'outra instancia (6.x) nao herda o "sem corpo" da instancia 8.0');
+  // MESMA instancia trocando de um 8.0 pra um 6.x: o "so header" aprendido nao pode grudar
+  // (o "so header" so e aprendido quando o header falha e o corpo e rejeitado: token ruim num 8.0)
+  scenario.rejectBodyAuth = true; scenario.badToken = 'tokA';
+  await setConfig({ instances: [{ id: 'instMv', label: 'MV', url: 'https://z80b', authType: 'token', token: 'tokA', enabled: true }] });
+  eq(BG.getState().authModes.instMv, 'header-only', 'token ruim num 8.0: aprende que o servidor e so header');
+  scenario.rejectBodyAuth = false; scenario.badToken = null; scenario.rejectHeaderAuth = true; // agora o servidor e um 6.x: so corpo
+  await setConfig({ instances: [{ id: 'instMv', label: 'MV', url: 'https://z60b', authType: 'token', token: 'tokA', enabled: true }] });
+  eq((BG.getState().instStatus.instMv || {}).state, 'ok', 'trocar a URL da instancia (8.0 -> 6.x) re-descobre o modo de auth');
+  scenario.rejectHeaderAuth = false; scenario.rejectBodyAuth = true; scenario.badToken = 'tokX';
+  await send({ action: 'testConnection', zabbixUrl: 'https://z80c', authType: 'token', apiToken: 'tokX' }); // Testar num 8.0 com token ruim
+  scenario.rejectBodyAuth = false; scenario.badToken = null; scenario.rejectHeaderAuth = true;
+  const t60 = await send({ action: 'testConnection', zabbixUrl: 'https://z60c', authType: 'token', apiToken: 'tokB' });
+  eq(t60 && t60.ok, true, 'botao Testar num 6.x depois de um teste num 8.0 tambem re-descobre (instId "test" compartilhado)');
+  scenario.rejectHeaderAuth = false;
+
+  console.log('\n--- Integracao: ponto cego (instancia que a extensao parou de enxergar) ---');
+  const blindNotifs = () => captured.notifs.filter(n => /^zbx-blind-/.test(n.id));
+  const ageDown = (id, min) => { BG.getState().downSince[id] = Date.now() - min * 60000; };
+  scenario.byBase = { 'https://zBlind': [P(350, 4)], 'https://z2': [] };
+  scenario.problemGetError = null;
+  await setConfig({ instances: [{ id: 'instBl', label: 'PRD', url: 'https://zBlind', token: 't1', enabled: true }], minSeverity: 0, repeatAlarm: false, muted: false, mutedUntil: 0, blindSpotAlert: true, blindSpotMinutes: 2, notificationsEnabled: true, soundEnabled: true, workingTimeOnly: false, suppressDuringMeeting: false });
+  await poll();
+  eq([BG.getDefaults().blindSpotAlert, BG.getDefaults().blindSpotMinutes], [true, 2], 'ponto cego vem ligado por padrao, 2 min (DEFAULT_CONFIG)');
+  scenario.problemGetError = 'Connection refused';
+  await poll();
+  eq(blindNotifs().length, 0, 'falha recem-comecada (< N min) ainda nao alerta (evita falso alarme num soluco)');
+  ageDown('instBl', 3);
+  BG.getState().instBackoff = {}; // forca tentar de novo (senao o backoff pula o poll, e tudo bem: continua "cego")
+  await poll();
+  const bn = blindNotifs();
+  eq(bn.length, 1, 'cego ha mais de N min: UMA notificacao de ponto cego');
+  assert(bn[0] && /PRD/.test(bn[0].title) && /Connection refused/.test(bn[0].message), 'notificacao diz qual instancia e o motivo');
+  assert(captured.sounds.some(s => s.preset === 'flatline'), 'ponto cego toca um som proprio (flatline), diferente de alerta de problema');
+  await poll();
+  eq(blindNotifs().length, 0, 'continua cego: nao repete a notificacao a cada poll');
+  scenario.problemGetError = null;
+  BG.getState().instBackoff = {};
+  await poll();
+  assert(captured.notifs.some(n => /^zbx-blindok-/.test(n.id)), 'instancia voltou: avisa que voltou a enxergar');
+  assert(captured.cleared.includes('zbx-blind-instBl'), 'e fecha a notificacao de ponto cego');
+  // sessao caida (modo sessao sem cookie) tambem e ponto cego
+  scenario.cookie = null;
+  await setConfig({ instances: [{ id: 'instBl', label: 'PRD', url: 'https://zBlind', authType: 'session', enabled: true }] });
+  await poll(); ageDown('instBl', 5); await poll();
+  assert(blindNotifs().some(n => /PRD/.test(n.title)), 'sessao caida por mais de N min = ponto cego');
+  // mudo segura o aviso; ao desmutar ele sai (uma vez)
+  await setConfig({ instances: [{ id: 'instBl', label: 'PRD', url: 'https://zBlindMute', authType: 'session', enabled: true }], muted: true });
+  await poll(); ageDown('instBl', 5); await poll();
+  eq(blindNotifs().length, 0, 'mudo: ponto cego nao alerta');
+  await send({ action: 'setMuted', muted: false });
+  await poll();
+  eq(blindNotifs().length, 1, 'desmutou e continua cego: o aviso que estava segurado sai agora');
+  await setConfig({ volume: 0.3 });
+  ageDown('instBl', 10); await poll();
+  eq(blindNotifs().length, 0, 'salvar opcao sem relacao (volume) com a instancia ainda cega nao repete o aviso');
+  // varias instancias cegas no mesmo poll: um aviso por instancia, mas UM som so
+  await setConfig({ instances: [
+    { id: 'instBA', label: 'A', url: 'https://zBlA', authType: 'session', enabled: true },
+    { id: 'instBB', label: 'B', url: 'https://zBlB', authType: 'session', enabled: true },
+    { id: 'instBC', label: 'C', url: 'https://zBlC', authType: 'session', enabled: true },
+  ], blindSpotAlert: true, muted: false });
+  await poll(); ['instBA', 'instBB', 'instBC'].forEach(id => ageDown(id, 5)); await poll();
+  eq(blindNotifs().length, 3, '3 instancias cegas: 3 notificacoes (uma por instancia)');
+  eq(captured.sounds.filter(s => s.preset === 'flatline').length, 1, '...mas um som so no poll, nao 3 flatlines empilhados');
+  // desligado nas opcoes = nunca
+  await setConfig({ instances: [{ id: 'instBl', label: 'PRD', url: 'https://zBlindOff', authType: 'session', enabled: true }], blindSpotAlert: false });
+  await poll(); ageDown('instBl', 30); await poll();
+  eq(blindNotifs().length, 0, 'blindSpotAlert desligado: nunca alerta');
+  await setConfig({ blindSpotAlert: true });
+
+  console.log('\n--- Integracao: mudo com tempo desliga sozinho e avisa ---');
+  scenario.byBase = { 'https://zMute': [P(320, 5)], 'https://z2': [] };
+  await setConfig({ instances: [{ id: 'instMute', label: 'PRD', url: 'https://zMute', token: 't1', enabled: true }], minSeverity: 0, repeatAlarm: false, muted: false, mutedUntil: 0, suppressDuringMeeting: false, workingTimeOnly: false, notificationsEnabled: true, soundEnabled: true });
+  await poll(); // baseline
+  const m1 = await send({ action: 'setMuted', muted: true, minutes: 15 });
+  assert(m1.muted === true && Math.abs(m1.mutedUntil - (Date.now() + 15 * 60000)) < 5000, 'setMuted com minutes: mudo ate agora+15min');
+  scenario.byBase['https://zMute'].push(P(321, 5, { name: 'chegou mutado' }));
+  await poll();
+  assert(!captured.sounds.length && !captured.notifs.length, 'durante o mudo com tempo: problema novo nao alerta');
+  eq((await send({ action: 'getStatus' })).mutedUntil, m1.mutedUntil, 'getStatus devolve mutedUntil pro popup mostrar a contagem');
+  BG.getConfig().mutedUntil = Date.now() - 1000; // o tempo do mudo passou
+  scenario.byBase['https://zMute'].push(P(322, 5, { name: 'chegou depois do mudo' }));
+  await poll();
+  assert(BG.getConfig().muted === false && BG.getConfig().mutedUntil === 0, 'mudo vencido desliga sozinho no poll');
+  assert(captured.notifs.some(n => n.id === 'zbx-unmuted'), 'avisa com uma notificacao que os alertas voltaram');
+  assert(captured.sounds.length === 1 && captured.notifs.some(n => /chegou depois do mudo/.test(n.message)), 'problema novo apos o fim do mudo alerta normalmente');
+  // re-alarme DESLIGADO: o que chegou durante o mudo com tempo e continua aberto tem que alertar
+  // quando o mudo acaba (como o fim de um snooze), senao some calado
+  scenario.byBase = { 'https://zMute2': [P(325, 5, { name: 'ja existia antes do mudo' })], 'https://z2': [] };
+  await setConfig({ instances: [{ id: 'instMute2', label: 'PRD', url: 'https://zMute2', token: 't1', enabled: true }], repeatAlarm: false, muted: false, mutedUntil: 0 });
+  await poll();
+  await send({ action: 'setMuted', muted: true, minutes: 60 });
+  scenario.byBase['https://zMute2'].push(P(326, 5, { name: 'chegou durante o mudo' }), P(327, 4, { name: 'chegou e levou ack', acknowledged: '1' }));
+  await poll();
+  assert(!captured.sounds.length && !captured.notifs.length, '(pre) durante o mudo nada alerta');
+  BG.getConfig().mutedUntil = Date.now() - 1000;
+  await poll();
+  const wokeMsgs = captured.notifs.filter(n => !/^zbx-unmuted$/.test(n.id)).map(n => n.message);
+  eq(wokeMsgs, ['chegou durante o mudo'], 'fim do mudo com tempo: alerta o que chegou durante ele e continua aberto sem ack (so isso)');
+  assert(captured.sounds.length === 1, 'com som (um so)');
+  await poll();
+  assert(!captured.sounds.length && !captured.notifs.length, 'e nao repete no poll seguinte');
+
+  // fim de snooze + problema novo no MESMO poll: um som so, e ganha a maior severidade
+  scenario.byBase = { 'https://zOv': [P(328, 5, { name: 'desastre adiado' })], 'https://z2': [] };
+  await setConfig({ instances: [{ id: 'instOv', label: 'PRD', url: 'https://zOv', token: 't1', enabled: true }], repeatAlarm: false, muted: false, mutedUntil: 0 });
+  await poll();
+  BG.getState().snoozes['instOv:328'] = Date.now() - 1; // o snooze do desastre acabou agora
+  scenario.byBase['https://zOv'].push(P(329, 2, { name: 'warning novo' }));
+  await poll();
+  eq(captured.sounds.map(s => s.preset), ['klaxon'], 'fim de snooze (desastre) + novo (warning) no mesmo poll: UM som, o do desastre');
+  assert(captured.notifs.some(n => n.message === 'desastre adiado') && captured.notifs.some(n => n.message === 'warning novo'), 'as duas notificacoes saem normalmente');
+
+  const m2 = await send({ action: 'setMuted', muted: true });
+  eq([m2.muted, m2.mutedUntil], [true, 0], 'setMuted sem tempo: mudo ate reativar (mutedUntil 0)');
+  await poll();
+  assert(BG.getConfig().muted === true, 'mudo sem tempo continua ligado apos o poll');
+  const m3 = await send({ action: 'setMuted', muted: false });
+  eq([m3.muted, m3.mutedUntil], [false, 0], 'desmutar zera o mutedUntil');
+  // fim do turno: segmento atual do work_period
+  const wpe = sandbox.workPeriodEnd('1-5,09:00-18:00', new Date(2026, 6, 8, 10, 30));
+  eq(wpe && [wpe.getHours(), wpe.getMinutes(), wpe.getDate()], [18, 0, 8], 'workPeriodEnd: quarta 10:30 em 1-5,09:00-18:00 termina 18:00 do mesmo dia');
+  eq(sandbox.workPeriodEnd('1-5,09:00-18:00', new Date(2026, 6, 11, 10, 0)), null, 'workPeriodEnd: fora do periodo (sabado) = null');
+  const wpe24 = sandbox.workPeriodEnd('1-7,00:00-24:00', new Date(2026, 6, 8, 23, 0));
+  eq(wpe24 && [wpe24.getDate(), wpe24.getHours()], [9, 0], 'workPeriodEnd: 24:00 vira meia-noite do dia seguinte');
+  eq(sandbox.workPeriodEnd('', new Date()), null, 'workPeriodEnd: sem periodo = null (sem turno pra acabar)');
+  const wpeU = sandbox.workPeriodEnd('1-5,08:00-12:00;1-5,09:00-20:00', new Date(2026, 6, 8, 10, 0));
+  eq(wpeU && wpeU.getHours(), 20, 'workPeriodEnd: segmentos sobrepostos = o fim mais tarde');
+
+  console.log('\n--- Integracao: importar settings nao apaga token/senha locais ---');
+  // o arquivo exportado leva token:'' e password:'' de proposito; importar ele de volta (mesmo
+  // navegador, backup) nao pode zerar as credenciais, senao toda instancia token/senha vira erro.
+  await setConfig({ instances: [
+    { id: 'inst1', label: 'PRD', url: 'https://zImp1', authType: 'token', token: 'tokA', enabled: true },
+    { id: 'inst2', label: 'HML', url: 'https://zImp2/', authType: 'password', username: 'noc', password: 'pwB', enabled: true },
+    { id: 'inst3', label: 'LAB', url: 'https://zImp3', authType: 'token', token: 'tokC', enabled: true },
+    { id: 'inst4', label: 'DEV', url: 'https://zImp4', authType: 'password', username: 'old', password: 'pwD', enabled: true },
+  ], minSeverity: 0, repeatAlarm: false });
+  await send({ action: 'importConfig', config: { minSeverity: 3, apiToken: 'legado', instances: [
+    { id: 'inst1', label: 'PRD-imp', url: 'https://zImp1', authType: 'token', token: '', enabled: true },
+    { id: 'inst2', label: 'HML-imp', url: 'https://zImp2', authType: 'password', username: 'noc', password: '', enabled: true },
+    { id: 'inst3', label: 'LAB-imp', url: 'https://outro-servidor', authType: 'token', token: '', enabled: true },
+    { id: 'inst4', label: 'DEV-imp', url: 'https://zImp4', authType: 'password', username: 'novo', password: '', enabled: true },
+  ] } });
+  const impInst = BG.getConfig().instances;
+  eq(impInst.map(i => i.label), ['PRD-imp', 'HML-imp', 'LAB-imp', 'DEV-imp'], 'import aplica as instancias do arquivo');
+  eq(BG.getConfig().minSeverity, 3, 'import aplica as opcoes globais do arquivo');
+  eq(impInst[0].token, 'tokA', 'mesma URL: token local preservado (arquivo vem sem token)');
+  eq(impInst[1].password, 'pwB', 'mesma URL (barra final ignorada) e mesmo usuario: senha local preservada');
+  eq(impInst[2].token, '', 'URL diferente: token local NAO vai pra outro servidor');
+  eq(impInst[3].password, '', 'usuario diferente: senha local NAO e reaproveitada');
+  assert(BG.getConfig().apiToken === undefined, 'apiToken legado do arquivo e ignorado');
 
   console.log('\n--- Integracao: resolvido respeita mute e modo reuniao (hardening) ---');
   scenario.byBase = { 'https://z1': [P(301, 5)], 'https://z2': [] };
@@ -629,6 +950,343 @@ function P(ev, sev, x = {}) { return { eventid: String(ev), objectid: 't' + ev, 
   const p971 = (stUnseen.problems || []).find(p => p.eventid === '971');
   eq(p970.unseen, false, '970 (conhecido antes do popup abrir) nao fica marcado unseen');
   eq(p971.unseen, true, '971 (chegou depois do popup abrir) fica marcado unseen, mesmo com badgeUnseen desligado');
+
+  // =================================================================
+  // Bug hunt da rodada v0.6 (combinacoes das mudancas da rodada). Testes que FALHAM no codigo atual.
+  scenario.rejectBodyAuth = false; scenario.rejectHeaderAuth = false; scenario.problemGetError = null;
+  scenario.meetTabs = []; scenario.workPeriod = ''; scenario.login = null; scenario.requireSid = false;
+
+  console.log('\n--- Bug hunt (pre-existente, fora da rodada): baseline gasto num poll que falhou ---');
+  scenario.cookie = null;
+  scenario.byBase = { 'https://zNew': [P(397, 5, { name: 'ja existia antes de logar' }), P(398, 4)] };
+  await setConfig({ instances: [{ id: 'instNew', label: 'NOVO', url: 'https://zNew', authType: 'session', enabled: true }], minSeverity: 0, repeatAlarm: false, muted: false, notificationsEnabled: true, soundEnabled: true, blindSpotAlert: false });
+  eq(BG.getState().instStatus.instNew.state, 'no-session', '(pre) instancia recem-adicionada, ainda sem sessao no Zabbix dela');
+  scenario.cookie = zbxCookie('sess-inst-nova'); // usuario loga no Zabbix novo
+  await poll();
+  eq(BG.getState().instStatus.instNew.state, 'ok', '(pre) logou: instancia ok');
+  assert(!captured.sounds.length && !captured.notifs.length, 'problemas que ja existiam antes do 1o poll COM SUCESSO nao disparam alerta de novo (baseline nao pode ser gasto num poll que falhou)');
+  scenario.byBase['https://zNew'].push(P(399, 5, { name: 'novo de verdade' }));
+  await poll();
+  assert(captured.sounds.length === 1 && captured.notifs.some(n => n.message === 'novo de verdade'), 'depois desse baseline, um problema novo de verdade nessa instancia alerta normalmente');
+  scenario.cookie = null;
+
+  console.log('\n--- Bug hunt v0.6: botoes da notificacao depois do service worker dormir ---');
+  // storage.session real: o get e assincrono, entao 2 saveNotifUrl no mesmo tick leem o MESMO mapa
+  // antigo e o ultimo set ganha. Mock fiel so neste teste (restaurado no fim).
+  const sessGetOrig = chrome.storage.session.get;
+  chrome.storage.session.get = (keys, cb) => {
+    const o = {}; (Array.isArray(keys) ? keys : [keys]).forEach(k => { if (storageSession[k] !== undefined) o[k] = JSON.parse(JSON.stringify(storageSession[k])); });
+    return new Promise(res => setTimeout(() => { cb && cb(o); res(o); }, 0));
+  };
+  storageSession.notifUrls = {};
+  scenario.byBase = { 'https://zSw': [] };
+  await setConfig({ instances: [{ id: 'instSw', label: 'PRD', url: 'https://zSw', token: 't1', enabled: true }], minSeverity: 0, repeatAlarm: false, muted: false, notificationsEnabled: true, soundEnabled: true });
+  await poll();
+  scenario.byBase['https://zSw'].push(P(390, 5, { name: 'primeiro do lote' }), P(391, 4, { name: 'segundo do lote' }));
+  await poll(); await tick(30);
+  const nFirst = captured.notifs.find(n => n.message === 'primeiro do lote');
+  BG.getState().notifUrls = {}; // service worker dormiu: a memoria some, o storage.session fica
+  scenario.ackCalls = []; resetCaptures();
+  notifButtonListener(nFirst.id, 0); await tick(80);
+  chrome.storage.session.get = sessGetOrig;
+  eq((scenario.ackCalls || []).map(c => c.params.eventids), [['390']], 'SW dormiu: ACK pelo botao de QUALQUER notificacao do lote (nao so a ultima) chega no Zabbix, em vez de so fechar a notificacao');
+
+  console.log('\n--- Bug hunt v0.6: botao ACK depois de remover uma instancia do meio ---');
+  scenario.byBase = { 'https://zR1': [], 'https://zR2': [], 'https://zR3': [P(395, 4)] }; // eventid 395 tambem existe no R3
+  const R = (id, label, url) => ({ id, label, url, token: 't-' + label, enabled: true });
+  await setConfig({ instances: [R('inst1', 'R1', 'https://zR1'), R('inst2', 'R2', 'https://zR2'), R('inst3', 'R3', 'https://zR3')], minSeverity: 0, repeatAlarm: false, muted: false, notificationsEnabled: true });
+  await poll();
+  scenario.byBase['https://zR2'].push(P(395, 5, { name: 'problema do R2' }));
+  await poll();
+  const nR2 = captured.notifs.find(n => n.message === 'problema do R2');
+  // Opcoes: remove o R1; collectInstances renumera por posicao (R2 vira inst1, R3 vira inst2)
+  await setConfig({ instances: [R('inst1', 'R2', 'https://zR2'), R('inst2', 'R3', 'https://zR3')] });
+  scenario.ackCalls = [];
+  notifButtonListener(nR2.id, 0); await tick(80);
+  assert(!(scenario.ackCalls || []).some(c => c.base === 'https://zR3'), 'ACK de uma notificacao antiga do R2 nao vai parar no R3 (outro Zabbix) depois das instancias serem renumeradas');
+  eq((scenario.ackCalls || []).map(c => [c.base, c.params.eventids]), [['https://zR2', ['395']]], 'e vai pro R2 certo (achado pela URL gravada na notificacao)');
+  // instancia removida de vez: avisa em vez de mandar o ACK pra qualquer lugar
+  scenario.byBase['https://zR3'].push(P(396, 5, { name: 'problema do R3' }));
+  await poll();
+  const nR3 = captured.notifs.find(n => n.message === 'problema do R3');
+  await setConfig({ instances: [R('inst1', 'R2', 'https://zR2')] });
+  scenario.ackCalls = []; resetCaptures();
+  notifButtonListener(nR3.id, 0); await tick(80);
+  assert(!(scenario.ackCalls || []).length && captured.notifs.some(n => /^zbx-ackerr-/.test(n.id)), 'instancia removida: nenhum ACK enviado, e um aviso explica');
+  resetCaptures();
+  notifButtonListener(nR3.id, 1); await tick(80); // "Adiar 15 min" na mesma notificacao orfa
+  const snzWarn = captured.notifs.find(n => /^zbx-ackerr-/.test(n.id));
+  assert(snzWarn && !/ACK/.test(snzWarn.title), 'adiar numa instancia removida avisa sem dizer "ACK falhou" (o botao era o de adiar)');
+
+  console.log('\n--- Bug hunt v0.6: notificacao de ponto cego nao fica velha apos corrigir a credencial ---');
+  scenario.badToken = 'tok-velho';
+  scenario.byBase = { 'https://zBlFix': [P(356, 4)] };
+  const instFx = { id: 'instFx', label: 'FIX', url: 'https://zBlFix', authType: 'token', token: 'tok-velho', enabled: true };
+  await setConfig({ instances: [instFx], minSeverity: 0, repeatAlarm: false, muted: false, mutedUntil: 0, blindSpotAlert: true, blindSpotMinutes: 2, notificationsEnabled: true, soundEnabled: true, workingTimeOnly: false, suppressDuringMeeting: false });
+  await poll(); ageDown('instFx', 5); BG.getState().instBackoff = {}; await poll();
+  assert(blindNotifs().some(n => n.id === 'zbx-blind-instFx'), '(pre) token invalido ha mais de N min: ponto cego avisado');
+  scenario.badToken = null;
+  resetCaptures();
+  await setConfig({ instances: [{ ...instFx, token: 'tok-novo' }] }); // corrige o token nas Opcoes; o poll do proprio setConfig ja volta ok
+  const clearedAfterFix = captured.cleared.slice();
+  await poll();
+  eq(BG.getState().instStatus.instFx.state, 'ok', '(pre) token corrigido: instancia volta a ok');
+  assert(clearedAfterFix.concat(captured.cleared).includes('zbx-blind-instFx'), 'token corrigido nas Opcoes: a notificacao de ponto cego (requireInteraction) e fechada, nao fica na tela dizendo que esta cego');
+  // instancia removida enquanto cega: a notificacao dela fecha
+  scenario.badToken = 'tok-rm';
+  await setConfig({ instances: [{ ...instFx, token: 'tok-rm' }, { id: 'instFx2', label: 'OUTRA', url: 'https://zBlFix2', token: 't2', enabled: true }] });
+  await poll(); ageDown('instFx', 5); BG.getState().instBackoff = {}; await poll();
+  assert(blindNotifs().some(n => n.id === 'zbx-blind-instFx'), '(pre) cega de novo');
+  resetCaptures();
+  await setConfig({ instances: [{ id: 'instFx2', label: 'OUTRA', url: 'https://zBlFix2', token: 't2', enabled: true }] }); // remove a cega
+  assert(captured.cleared.includes('zbx-blind-instFx'), 'instancia removida enquanto cega: a notificacao fixa dela fecha');
+  scenario.badToken = null;
+  // service worker reiniciou (flags so em memoria): a 1a vez que a instancia aparece ok fecha uma notificacao velha
+  BG.getState().blindAlerted = {}; BG.getState().blindOkSeen = {};
+  resetCaptures(); await poll();
+  assert(captured.cleared.includes('zbx-blind-instFx2'), 'SW reiniciado: 1o poll ok fecha qualquer notificacao de cego velha da instancia');
+  resetCaptures(); await poll();
+  assert(!captured.cleared.includes('zbx-blind-instFx2'), 'e nao fica chamando clear a cada poll depois disso');
+
+  console.log('\n--- Bug hunt v0.6: "mudo ate o fim do turno" com o turno ja acabado ---');
+  const mPast = await send({ action: 'setMuted', muted: true, untilTs: Date.now() - 60000 });
+  assert(!(mPast.muted && !mPast.mutedUntil), 'setMuted com untilTs que ja passou nao vira mudo INDEFINIDO (o oposto do que foi pedido)');
+  eq([mPast.muted, BG.getConfig().muted], [false, false], 'turno ja acabado: nao muta (nao ha o que silenciar)');
+  await send({ action: 'setMuted', muted: false });
+
+  console.log('\n--- Bug hunt v0.6: import com 2 instancias na mesma URL (filtros diferentes, credenciais diferentes) ---');
+  await setConfig({ instances: [
+    { id: 'inst1', label: 'A', url: 'https://zDup', authType: 'password', username: 'team-a', password: 'pwA', enabled: false },
+    { id: 'inst2', label: 'B', url: 'https://zDup', authType: 'password', username: 'team-b', password: 'pwB', enabled: false },
+    { id: 'inst3', label: 'C', url: 'https://zDupT', authType: 'token', token: 'tokC1', enabled: false },
+    { id: 'inst4', label: 'D', url: 'https://zDupT', authType: 'token', token: 'tokC2', enabled: false },
+  ] });
+  await send({ action: 'importConfig', config: { instances: [
+    { id: 'inst1', label: 'A', url: 'https://zDup', authType: 'password', username: 'team-a', password: '', enabled: false },
+    { id: 'inst2', label: 'B', url: 'https://zDup', authType: 'password', username: 'team-b', password: '', enabled: false },
+    { id: 'inst3', label: 'C', url: 'https://zDupT', authType: 'token', token: '', enabled: false },
+    { id: 'inst4', label: 'D', url: 'https://zDupT', authType: 'token', token: '', enabled: false },
+  ] } });
+  const dupInst = BG.getConfig().instances;
+  eq(dupInst[1].password, 'pwB', 'import: 2a instancia da mesma URL (outro usuario) mantem a PROPRIA senha local');
+  eq(dupInst[3].token, 'tokC2', 'import: 2a instancia da mesma URL mantem o PROPRIO token, nao o da 1a');
+
+  // =================================================================
+  // 2a passada adversarial (sobre os fixes da rodada). Testes que FALHAM no codigo atual.
+
+  console.log('\n--- Bug hunt v0.6 (2a passada): re-baseline do setConfig com OUTRA instancia cega ---');
+  // A ja tinha baseline e caiu (sessao); o operador adiciona um 2o Zabbix nas Opcoes (o filtro da A
+  // nao muda). O re-baseline zera instBaselined de TODAS: a A, ainda cega, perde o baseline que o
+  // carry-forward mantinha. Um desastre que chega na A durante a queda e adotado calado ao voltar.
+  scenario.cookie = zbxCookie('sess-rb-1');
+  scenario.byBase = { 'https://zRbA': [P(410, 4, { name: 'ja conhecido antes da queda' })], 'https://zRbB': [] };
+  const instRbA = { id: 'instRbA', label: 'A', url: 'https://zRbA', authType: 'session', enabled: true };
+  await setConfig({ instances: [instRbA], minSeverity: 0, repeatAlarm: false, muted: false, mutedUntil: 0, notificationsEnabled: true, soundEnabled: true, blindSpotAlert: false, workingTimeOnly: false, suppressDuringMeeting: false });
+  await poll();
+  scenario.cookie = null; await poll(); // sessao da A caiu: carry-forward
+  await setConfig({ instances: [instRbA, { id: 'instRbB', label: 'B', url: 'https://zRbB', token: 'tB', enabled: true }] });
+  eq(BG.getState().instStatus.instRbA.state, 'no-session', '(pre) A continua sem sessao depois de adicionar a B');
+  scenario.byBase['https://zRbA'].push(P(411, 5, { name: 'desastre durante a queda' }));
+  await poll();
+  scenario.cookie = zbxCookie('sess-rb-2'); // operador loga de novo no Zabbix da A
+  await poll();
+  eq(BG.getState().instStatus.instRbA.state, 'ok', '(pre) A voltou');
+  assert(captured.sounds.length === 1 && captured.notifs.some(n => n.message === 'desastre durante a queda'), 'instancia cega durante um re-baseline (outra instancia adicionada): o desastre que chegou nela durante a queda alerta quando ela volta, nao e adotado calado');
+  scenario.cookie = null;
+
+  console.log('\n--- Bug hunt v0.6 (2a passada): setConfig com um poll em voo gasta o baseline com o filtro velho ---');
+  // o problem.get leva severities (filtro no SERVIDOR) montado antes do await; o setConfig chega no
+  // meio, zera instBaselined, e o poll em voo marca a instancia como baselined com a lista do filtro
+  // velho. O poll coalescido seguinte ve tudo que so passou a ser visivel como "novo".
+  scenario.byBase = { 'https://zRace': [P(420, 4, { name: 'high antigo' }), P(421, 2, { name: 'warning antigo' })] };
+  await setConfig({ instances: [{ id: 'instRace', label: 'R', url: 'https://zRace', token: 'tR', enabled: true }], minSeverity: 4, repeatAlarm: false, muted: false, mutedUntil: 0, notificationsEnabled: true, soundEnabled: true, blindSpotAlert: false });
+  await poll();
+  const fetchOrigRace = sandbox.fetch;
+  let releaseRace = null;
+  sandbox.fetch = async (url, opts) => {
+    const b = JSON.parse(opts.body);
+    if (b.method === 'problem.get' && !releaseRace) await new Promise(r => { releaseRace = r; });
+    const res = await fetchOrigRace(url, opts);
+    if (b.method !== 'problem.get' || !Array.isArray(b.params.severities)) return res;
+    const data = await res.json(); // Zabbix filtra severities no servidor (o mock nao filtra)
+    data.result = data.result.filter(p => b.params.severities.includes(Number(p.severity)));
+    return { status: 200, json: async () => data };
+  };
+  resetCaptures();
+  const inflightRace = send({ action: 'pollNow' });
+  await tick(5); // poll parado no problem.get com severities [4,5]
+  const cfgRace = setConfig({ minSeverity: 2 }); // operador baixa a severidade minima nesse instante
+  releaseRace();
+  await inflightRace; await cfgRace; await tick(30);
+  sandbox.fetch = fetchOrigRace;
+  assert(!captured.notifs.some(n => n.message === 'warning antigo'), 'filtro alterado com um poll em voo: um problema que ja existia e so passou a ser visivel nao dispara como novo');
+  assert(!!probByEvent('instRace', '421'), 'mas aparece na lista (o poll seguinte, com o filtro novo, fez o baseline)');
+  scenario.byBase['https://zRace'].push(P(422, 3, { name: 'average novo de verdade' }));
+  await poll();
+  assert(captured.notifs.some(n => n.message === 'average novo de verdade'), 'e um problema novo de verdade depois disso alerta normalmente');
+  // mesma corrida com o re-alarme ligado: o poll em voo (que nao vale como baseline) nao pode soltar
+  // um re-alarme espurio so porque o setConfig zerou o relogio do nag
+  await setConfig({ minSeverity: 4, repeatAlarm: true, repeatInterval: 60, nagNotify: true });
+  await poll();
+  BG.getState().lastAlarmTs = Date.now(); // acabou de alarmar: o nag so pode voltar daqui a 60s
+  let releaseRace2 = null;
+  sandbox.fetch = async (url, opts) => {
+    const b = JSON.parse(opts.body);
+    if (b.method === 'problem.get' && !releaseRace2) await new Promise(r => { releaseRace2 = r; });
+    return fetchOrigRace(url, opts);
+  };
+  resetCaptures();
+  const inflight2 = send({ action: 'pollNow' });
+  await tick(5);
+  const cfg2 = setConfig({ minSeverity: 3 });
+  releaseRace2();
+  await inflight2; await cfg2; await tick(30);
+  sandbox.fetch = fetchOrigRace;
+  eq(captured.notifs.filter(n => n.id === 'zbx-nag').length, 0, 'filtro salvo com poll em voo: nenhum re-alarme espurio (o relogio do nag nao fica zerado)');
+  await setConfig({ repeatAlarm: false });
+
+  console.log('\n--- Bug hunt v0.6 (2a passada): snooze que vence DURANTE o mudo com tempo ---');
+  // o fim do snooze cai no meio do mudo: o lote "woke" sai silenciado e o snooze e apagado. No fim do
+  // mudo, o re-alerta so olha firstSeenTs >= mutedAt, e o problema ja existia antes: nunca mais alerta.
+  scenario.byBase = { 'https://zSnzMute': [P(450, 5, { name: 'adiado e depois mudo' })] };
+  await setConfig({ instances: [{ id: 'instSm', label: 'PRD', url: 'https://zSnzMute', token: 'tS', enabled: true }], minSeverity: 0, repeatAlarm: false, muted: false, mutedUntil: 0, notificationsEnabled: true, soundEnabled: true, blindSpotAlert: false });
+  await poll();
+  BG.getState().snoozes['instSm:450'] = Date.now() + 15 * 60000; // operador adia 15 min
+  await send({ action: 'setMuted', muted: true, minutes: 60 });   // e depois muta por 1 h
+  BG.getState().snoozes['instSm:450'] = Date.now() - 1;            // o snooze vence no meio do mudo
+  await poll();
+  assert(!captured.sounds.length && !captured.notifs.length, '(pre) durante o mudo nada alerta');
+  BG.getConfig().mutedUntil = Date.now() - 1000;                    // fim do mudo
+  await poll();
+  assert(captured.notifs.some(n => n.message === 'adiado e depois mudo'), 'snooze que venceu durante o mudo com tempo (re-alarme off): o problema, ainda aberto e sem ack, alerta no fim do mudo em vez de sumir calado');
+
+  console.log('\n--- Bug hunt v0.6 (2a passada): URL trocada no lugar, Zabbix novo ainda ilegivel ---');
+  // _carryForward reusa state.lastActive[instId], que nao e limpo quando a URL da instancia muda: a
+  // lista do Zabbix ANTIGO aparece (e re-alarma) como se fosse do novo, com links/ACK pro novo.
+  scenario.cookie = null;
+  scenario.byBase = { 'https://zOldSrv': [P(460, 5, { name: 'desastre do Zabbix antigo' })], 'https://zNewSrv': [] };
+  const instMv = { id: 'instMv', label: 'PRD', url: 'https://zOldSrv', authType: 'token', token: 'tOld', enabled: true };
+  await setConfig({ instances: [instMv], minSeverity: 0, repeatAlarm: true, repeatInterval: 5, nagNotify: true, muted: false, mutedUntil: 0, notificationsEnabled: true, soundEnabled: true, blindSpotAlert: false });
+  await poll();
+  await setConfig({ instances: [{ ...instMv, url: 'https://zNewSrv', authType: 'session', token: '' }] }); // migracao pro Zabbix novo, sem sessao ainda
+  eq(BG.getState().instStatus.instMv.state, 'no-session', '(pre) instancia agora aponta pro Zabbix novo, ainda sem sessao');
+  assert(!probByEvent('instMv', '460'), 'URL da instancia trocada: a lista do Zabbix ANTIGO nao continua no popup como se fosse do novo');
+  BG.getState().lastAlarmTs = 0; await poll();
+  assert(!captured.notifs.some(n => n.message === 'desastre do Zabbix antigo'), 'e o nag nao re-alarma um problema do Zabbix antigo apontando (link/ACK) pro novo');
+  scenario.byBase['https://zNewSrv'] = [P(461, 5, { name: 'ja existia no Zabbix novo' })];
+  scenario.cookie = zbxCookie('sess-novo'); BG.getState().instBackoff = {};
+  resetCaptures(); await poll();
+  assert(!!probByEvent('instMv', '461'), 'Zabbix novo respondeu: o que ja existia la aparece na lista');
+  // (o re-alarme esta LIGADO neste teste: o lembrete zbx-nag de um problema sem ack e esperado; o que
+  // nao pode e ele chegar como alerta de problema NOVO, id zbx-<eventid>-...)
+  eq(captured.notifs.filter(n => /^zbx-461-/.test(n.id)).length, 0, 'e entra calado como baseline novo, nao como alerta de problema novo (sem enxurrada)');
+  eq(captured.notifs.filter(n => n.id !== 'zbx-nag').length, 0, 'nenhuma notificacao alem do lembrete do re-alarme');
+  scenario.cookie = null;
+
+  console.log('\n--- Exibicao: tags estilo Zabbix (popup.js real, linha montada) ---');
+  const DEF = BG.getDefaults();
+  eq([DEF.showTags, DEF.tagNameFormat, DEF.tagPriority], [3, 'full', ''], 'padroes das tags = visual de antes (3 chips, nome completo, sem prioridade)');
+  // tags tipicas de template do Zabbix 6+: class/component/scope sao ruido, service/team e o que o NOC le
+  const tagsP = { eventid: '1', instId: 'i1', host: 'web-01', name: 'CPU alta', severity: '4', clock: String(Math.floor(Date.now() / 1000)),
+    tags: [{ tag: 'class', value: 'os' }, { tag: 'component', value: 'cpu' }, { tag: 'scope', value: 'performance' }, { tag: 'service', value: 'web' }, { tag: 'team', value: '' }] };
+  const chips = (html) => [...html.matchAll(/class="tagchip"[^>]*>([^<]*)</g)].map(m => m[1]);
+  const tagMore = (html) => (html.match(/class="tagmore"[^>]*>\+(\d+)</) || [])[1] || null;
+  let rowH = popRow(tagsP, {});
+  eq(chips(rowH), ['class:os', 'component:cpu', 'scope:performance'], 'sem config: os 3 primeiros chips com o nome completo (igual a antes)');
+  eq(tagMore(rowH), '2', 'e o "+2" das que sobraram');
+  rowH = popRow(tagsP, { showTags: 1 });
+  eq(chips(rowH), ['class:os'], 'mostrar 1 tag');
+  eq(tagMore(rowH), '4', '...com o +4 do resto');
+  rowH = popRow(tagsP, { showTags: 0 });
+  assert(/CPU alta/.test(rowH) && !/tagrow/.test(rowH), 'mostrar nenhuma tag: a linha aparece, sem a fila de tags');
+  eq(chips(popRow(tagsP, { tagPriority: 'service, Team' })), ['service:web', 'team', 'class:os'], 'prioridade: service e team primeiro, na ordem da lista e sem diferenciar maiusculas; o resto na ordem do Zabbix');
+  eq(chips(popRow(tagsP, { tagNameFormat: 'short' })), ['cla:os', 'com:cpu', 'sco:performance'], 'nome abreviado: 3 letras do nome, como no Zabbix');
+  eq(chips(popRow(tagsP, { tagNameFormat: 'none', tagPriority: 'team,service' })), ['team', 'web', 'os'], 'so o valor; tag sem valor mostra o nome (senao seria um chip vazio)');
+  assert(/data-tag="service:web"/.test(popRow(tagsP, { tagNameFormat: 'none', tagPriority: 'service' })), 'mostrando so o valor, o clique no chip continua filtrando por "tag:valor" completo');
+  eq(chips(popRow(tagsP, { showTags: '7', tagNameFormat: 'xx' })).length, 3, 'valor invalido no config cai no padrao (3 chips)');
+  eq(chips(popRow(tagsP, { showTags: '2' })).length, 2, 'numero vindo como texto do <select> funciona');
+
+  console.log('\n--- Exibicao: opdata estilo Zabbix (nao mostrar / linha separada / junto do nome) ---');
+  eq(DEF.opdataMode, 'separate', 'padrao do opdata = linha separada (visual de antes)');
+  const opP = { eventid: '3', instId: 'i1', host: 'web-01', name: 'CPU alta', severity: '4', clock: '1', opdata: 'CPU: 97.3 %', tags: [] };
+  const nameOf = (html) => (html.match(/class="name"[^>]*>([^<]*)</) || [])[1];
+  const opLine = (html) => (html.match(/class="opdata"[^>]*>([^<]*)</) || [])[1] || null;
+  rowH = popRow(opP, {});
+  eq([nameOf(rowH), opLine(rowH)], ['CPU alta', 'CPU: 97.3 %'], 'sem config: opdata numa linha separada (igual a antes)');
+  rowH = popRow(opP, { opdataMode: 'name' });
+  eq([nameOf(rowH), opLine(rowH)], ['CPU alta (CPU: 97.3 %)', null], 'junto do nome: entre parenteses depois do nome, como no Zabbix, e sem a linha separada');
+  assert(rowH.includes('title="CPU alta (CPU: 97.3 %)"'), '...e o texto ao passar o mouse tambem traz o valor');
+  rowH = popRow(opP, { opdataMode: 'none' });
+  eq([nameOf(rowH), opLine(rowH)], ['CPU alta', null], 'nao mostrar: nem linha separada, nem no nome');
+  eq(nameOf(popRow({ ...opP, opdata: '  ' }, { opdataMode: 'name' })), 'CPU alta', 'problema sem opdata (ou so espacos): nome sem parenteses vazios');
+  eq(opLine(popRow(opP, { opdataMode: 'xx' })), 'CPU: 97.3 %', 'valor invalido no config cai no padrao (linha separada)');
+
+  console.log('\n--- Exibicao: itens da linha e do topo (mensagem do ACK, SNZ/ACK, contadores, compacto) ---');
+  eq([DEF.showAckMsg, DEF.showRowActions, DEF.showSevCounts, DEF.compactRows], [true, true, true, false], 'padroes = visual de antes');
+  const dAckP = { eventid: '4', instId: 'i1', host: 'db-01', name: 'Disco cheio', severity: '4', clock: '1', acknowledged: true, ackmsg: 'limpando logs', opdata: 'free 3 %', tags: [{ tag: 'service', value: 'db' }] };
+  const dOpenP = { eventid: '5', instId: 'i1', host: 'web-01', name: 'CPU alta', severity: '4', clock: '1', opdata: 'CPU 97 %', tags: [{ tag: 'service', value: 'web' }] };
+  const dSnzP = { ...dOpenP, eventid: '6', snoozedUntil: Date.now() + 10 * 60000 };
+  assert(/class="ackinfo"[^>]*>[^<]*limpando logs/.test(popRow(dAckP, {})), 'sem config: mensagem do ACK embaixo do problema (igual a antes)');
+  rowH = popRow(dAckP, { showAckMsg: false });
+  assert(!/ackinfo/.test(rowH) && /tag ackd/.test(rowH), 'mensagem do ACK desligada: a linha da mensagem some, o selo ACK fica');
+  rowH = popRow(dOpenP, {});
+  assert(/class="snzbtn"/.test(rowH) && /class="ackbtn"/.test(rowH), 'sem config: botoes SNZ e ACK na linha');
+  rowH = popRow(dOpenP, { showRowActions: false });
+  assert(/CPU alta/.test(rowH) && !/snzbtn|ackbtn/.test(rowH), 'botoes desligados: a linha sem SNZ nem ACK');
+  rowH = popRow(dSnzP, { showRowActions: false });
+  assert(!/snzbtn/.test(rowH) && /class="tag snz"[^>]*>SNZ 10m</.test(rowH), 'botoes desligados com o problema adiado: o estado continua visivel, como selo "SNZ 10m"');
+  rowH = popRow(dOpenP, { compactRows: true });
+  assert(/class="row [^"]*\bcompact\b/.test(rowH), 'compacto: a linha ganha a classe compact (host e nome numa linha so, via CSS)');
+  assert(/CPU alta/.test(rowH) && !/tagrow/.test(rowH) && !/class="opdata"/.test(rowH), 'compacto: sem a fila de tags e sem a linha separada do opdata');
+  eq(nameOf(rowH), 'CPU alta (CPU 97 %)', 'compacto com opdata em linha separada: o valor vai junto do nome em vez de sumir');
+  eq(nameOf(popRow(dOpenP, { compactRows: true, opdataMode: 'none' })), 'CPU alta', 'compacto com opdata desligado: continua desligado');
+  rowH = popRow(dAckP, { compactRows: true });
+  assert(/Disco cheio/.test(rowH) && !/ackinfo/.test(rowH), 'compacto: sem a linha da mensagem do ACK');
+  try {
+    popSandbox.__pop.setSevFilter(5);
+    popSandbox.__pop.setDisp({ showSevCounts: false }); popSandbox.applyDisplay();
+    eq(popEl('.stats-row').style.display, 'none', 'contadores desligados: a barra de severidade some');
+    eq(popSandbox.__pop.getSevFilter(), null, '...e um filtro de severidade salvo e limpo (sem a barra nao teria como tirar, e a lista ficaria filtrada as cegas)');
+    const lastView = popSaved.length ? popSaved[popSaved.length - 1].popupView : null;
+    eq(lastView ? lastView.sevFilter : 'visao nao salva', null, '...limpo tambem na visao salva: religar a barra depois nao ressuscita o filtro antigo');
+    popSandbox.__pop.setDisp({}); popSandbox.applyDisplay();
+    eq(popEl('.stats-row').style.display, '', 'contadores ligados (padrao): a barra aparece');
+  } catch (e) { assert(false, 'applyDisplay: ' + e.message); }
+
+  console.log('\n--- Exibicao: conteudo da notificacao (opdata e botoes desligaveis) ---');
+  eq([DEF.notifOpdata, DEF.notifButtons], [true, true], 'padroes = notificacao de antes (com opdata e botoes)');
+  scenario.byBase = { 'https://zNotif': [] };
+  await setConfig({ instances: [{ id: 'instN', label: 'N', url: 'https://zNotif', token: 'tN', enabled: true }], minSeverity: 0, repeatAlarm: false, muted: false, mutedUntil: 0, notificationsEnabled: true, soundEnabled: true, blindSpotAlert: false });
+  await poll();
+  scenario.byBase['https://zNotif'] = [P(480, 5, { name: 'CPU alta', opdata: 'CPU 97 %' })];
+  await poll();
+  let notifN = captured.notifs.find(n => /^zbx-480-/.test(n.id));
+  eq(notifN && notifN.message, 'CPU alta - CPU 97 %', '(pre) padrao: opdata no texto da notificacao');
+  assert(!!notifN && Array.isArray(notifN.buttons) && notifN.buttons.length === 2, '(pre) padrao: botoes ACK e Adiar');
+  await setConfig({ notifOpdata: false, notifButtons: false });
+  scenario.byBase['https://zNotif'].push(P(481, 5, { name: 'Disco cheio', opdata: 'free 2 %' }));
+  await poll();
+  notifN = captured.notifs.find(n => /^zbx-481-/.test(n.id));
+  eq(notifN && notifN.message, 'Disco cheio', 'opdata da notificacao desligado: so o nome do problema');
+  assert(!!notifN && !(notifN.buttons && notifN.buttons.length), 'botoes da notificacao desligados: sem ACK/Adiar (usuario sem permissao nao ve botao que so falharia)');
+  await setConfig({ notifOpdata: true, notifButtons: true });
+
+  console.log('\n--- popup: aspas no nome/host/tag nao quebram os atributos da linha ---');
+  // esc() do popup nao escapava aspas (o das Opcoes ja escapava): title="${esc(nome)}" com aspas no
+  // nome fechava o atributo no meio e o resto do texto virava atributos soltos na tag.
+  const quoteP = { eventid: '2', instId: 'i1', host: 'srv-01', name: 'Disco "C:" cheio', severity: '4', clock: '1', tags: [{ tag: 'path', value: 'C:"x"' }] };
+  rowH = popRow(quoteP, {});
+  assert(rowH.includes('title="Disco &quot;C:&quot; cheio"'), 'aspas no nome do problema ficam escapadas dentro do title');
+  assert(rowH.includes('data-tag="path:C:&quot;x&quot;"'), 'aspas no valor da tag ficam escapadas no data-tag (o clique filtra pelo valor certo)');
+
+  // trocar so a exibicao nao pode re-basear (salvar as Opcoes viraria uma enxurrada de "novos")
+  scenario.byBase = { 'https://zDisp': [P(470, 5, { name: 'ja existia' })] };
+  await setConfig({ instances: [{ id: 'instD', label: 'D', url: 'https://zDisp', token: 'tD', enabled: true }], minSeverity: 0, repeatAlarm: false, muted: false, mutedUntil: 0, notificationsEnabled: true, soundEnabled: true, blindSpotAlert: false });
+  await poll();
+  await setConfig({ showTags: 1, tagNameFormat: 'short', tagPriority: 'service' });
+  assert(BG.getState().initialized === true, 'salvar so opcoes de exibicao das tags nao re-baseia');
+  await poll();
+  eq(captured.notifs.length + captured.sounds.length, 0, 'e o que ja existia nao alerta de novo');
 
   // =================================================================
   console.log('\n' + '='.repeat(44));

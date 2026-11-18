@@ -54,10 +54,14 @@ document.addEventListener('DOMContentLoaded', () => {
 function load() {
   chrome.runtime.sendMessage({ action: 'getConfig' }, (r) => {
     cfg = r?.config || {};
+    disp = displayOpts(cfg);
+    applyDisplay();
     lang = resolveLang(cfg.lang);
     applyI18n(lang);
     renderMute();
     chrome.runtime.sendMessage({ action: 'getStatus' }, (s) => {
+      // estado do mudo vem do background ja avaliado (mudo com tempo vencido = nao mutado)
+      if (s && s.muted !== undefined) { cfg.muted = !!s.muted; cfg.mutedUntil = Number(s.mutedUntil) || 0; renderMute(); }
       render(s?.status || {});
       // status vencido (navegador recem-aberto, service worker dormiu, 1o poll falhou):
       // re-consulta sozinho em vez de esperar o usuario clicar em "checar agora".
@@ -70,19 +74,65 @@ function load() {
   });
 }
 
+// Mudo: ja mutado -> um clique reativa; senao abre os presets (15 min / 1 h / 4 h / fim do turno /
+// ate reativar). Mudo esquecido "pra sempre" e como um NOC fica mudo o fim de semana inteiro.
 function toggleMute() {
-  chrome.runtime.sendMessage({ action: 'setMuted', muted: !cfg.muted }, (r) => {
-    cfg.muted = r?.muted; renderMute();
+  const menu = document.getElementById('muteMenu');
+  if (cfg.muted) { setMuted({ muted: false }); return; }
+  if (menu.style.display !== 'none') { menu.style.display = 'none'; return; }
+  const opts = [[15, '15 min'], [60, '1 h'], [240, '4 h']];
+  const draw = (shiftTs) => {
+    menu.innerHTML = `<span class="mute-label">${esc(t('mute_for', lang))}</span>`
+      + opts.map(([m, l]) => `<button class="muteopt" data-min="${m}">${l}</button>`).join('')
+      + (shiftTs ? `<button class="muteopt" data-until="${shiftTs}">${esc(t('mute_shift', lang).replace('{t}', hhmm(shiftTs)))}</button>` : '')
+      + `<button class="muteopt" data-forever="1">${esc(t('mute_forever', lang))}</button>`
+      + `<button class="mutex" title="${esc(t('cancel', lang))}">&#x2715;</button>`;
+    menu.querySelectorAll('.muteopt').forEach(b => b.addEventListener('click', () => {
+      menu.style.display = 'none';
+      if (b.dataset.min) setMuted({ muted: true, minutes: Number(b.dataset.min) });
+      else if (b.dataset.until) setMuted({ muted: true, untilTs: Number(b.dataset.until) });
+      else setMuted({ muted: true });
+    }));
+    menu.querySelector('.mutex').addEventListener('click', () => { menu.style.display = 'none'; });
+  };
+  draw(null);
+  menu.style.display = '';
+  // "fim do turno" so aparece se o work_period do servidor for legivel e agora estiver dentro dele
+  chrome.runtime.sendMessage({ action: 'getShiftEnd' }, (r) => { if (r?.untilTs && menu.style.display !== 'none') draw(r.untilTs); });
+}
+
+function setMuted(msg) {
+  chrome.runtime.sendMessage({ action: 'setMuted', ...msg }, (r) => {
+    cfg.muted = !!r?.muted; cfg.mutedUntil = Number(r?.mutedUntil) || 0; renderMute();
   });
+}
+
+function hhmm(ts) { return new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }); }
+
+// tempo restante, curto: 42m, 1h 20m
+function fmtLeft(ms) {
+  const m = Math.max(1, Math.ceil(ms / MIN_MS));
+  return m < 60 ? m + 'm' : Math.floor(m / 60) + 'h' + (m % 60 ? ' ' + (m % 60) + 'm' : '');
 }
 
 function renderMute() {
   const b = document.getElementById('muteBtn');
   b.innerHTML = `<span aria-hidden="true">${cfg.muted ? '&#x1f507;' : '&#x1f50a;'}</span>`;
-  b.title = t('t_mute', lang);
+  b.title = cfg.muted ? t('t_unmute', lang) : t('t_mute', lang);
+  b.setAttribute('aria-label', b.title);
   b.setAttribute('aria-pressed', String(!!cfg.muted)); // estado on/off pra leitor de tela
   b.classList.toggle('muted', !!cfg.muted);
+  // silencio tem que ser explicavel: faixa dizendo ate quando, senao vira "bug, parou de alertar"
+  const info = document.getElementById('muteInfo');
+  if (!cfg.muted) { info.style.display = 'none'; return; }
+  const until = Number(cfg.mutedUntil) || 0;
+  info.textContent = '\u{1f507} ' + (until > Date.now()
+    ? t('muted_left', lang).replace('{t}', fmtLeft(until - Date.now())).replace('{h}', hhmm(until))
+    : t('muted_forever', lang));
+  info.style.display = '';
 }
+// contagem do mudo andando enquanto o popup fica aberto
+setInterval(() => { if (cfg.muted && cfg.mutedUntil) { if (Date.now() >= cfg.mutedUntil) load(); else renderMute(); } }, 30000);
 
 function setStatusText(txt) { document.getElementById('statusBar').textContent = txt; }
 
@@ -103,8 +153,11 @@ function render(st) {
     bar.classList.add('err'); bar.textContent = t('err', lang) + ': ' + (st.error || '?');
     setCounts({}); fr.style.display = 'none'; note.style.display = 'none'; allProblems = []; renderList([]); return;
   }
-  // ok - multi-instance status
-  bar.classList.add('ok');
+  // ok - multi-instance status. O agregado e sempre 'ok', entao a falha POR instancia (sem sessao,
+  // erro, backoff) tem que aparecer aqui: senao a lista mostra o ultimo estado conhecido como se
+  // estivesse tudo bem e um Zabbix que a extensao parou de enxergar parece um Zabbix quieto.
+  const failing = Object.values(st.instStatus || {}).filter(s => s && s.label && s.state && s.state !== 'ok');
+  bar.classList.add(!failing.length ? 'ok' : (failing.some(e => e.state === 'error') ? 'err' : 'warn'));
   const instInfo = buildInstInfo(st.instStatus);
   // "Alertar so no horario de trabalho" ligado mas settings.get comecou a falhar: o fail-open
   // continua alertando normalmente, mas o usuario precisa saber que a opcao parou de filtrar
@@ -122,7 +175,8 @@ function applyFilter() {
   const term = (document.getElementById('filterBox').value || '').trim().toLowerCase();
   let list = allProblems;
   if (sevFilter !== null) list = list.filter(p => sevFilter === 'info' ? Number(p.severity) <= 1 : Number(p.severity) === sevFilter);
-  if (term) list = list.filter(p => ((p.host || '') + ' ' + (p.name || '')).toLowerCase().includes(term));
+  // o texto casa host, nome e as tags ("service:web"), entao clicar num chip de tag e so preencher o filtro
+  if (term) list = list.filter(p => ((p.host || '') + ' ' + (p.name || '') + ' ' + tagText(p)).toLowerCase().includes(term));
   // destaca a stat de severidade ativa
   document.querySelectorAll('.stats-row .stat').forEach(s => {
     const v = s.dataset.sev === 'info' ? 'info' : Number(s.dataset.sev);
@@ -150,6 +204,60 @@ function applyFilter() {
   renderList(list, !!term || sevFilter !== null, document.getElementById('groupBy').value);
 }
 
+// tags como texto "tag:valor" (o formato do filtro; o chip pode mostrar menos, ver tagChipText)
+function tagLabel(tg) { return tg.value ? tg.tag + ':' + tg.value : tg.tag; }
+function tagText(p) { return (p.tags || []).map(tagLabel).join(' '); }
+
+// Opcoes de exibicao do config, normalizadas: ausente ou invalido = o visual de antes.
+function displayOpts(c) {
+  c = c || {};
+  const n = (c.showTags == null || c.showTags === '') ? 3 : Number(c.showTags);
+  return {
+    showTags: [0, 1, 2, 3].includes(n) ? n : 3,
+    tagNameFormat: ['full', 'short', 'none'].includes(c.tagNameFormat) ? c.tagNameFormat : 'full',
+    tagPriority: String(c.tagPriority || '').split(/[,\n]/).map(s => s.trim().toLowerCase()).filter(Boolean),
+    opdataMode: ['none', 'separate', 'name'].includes(c.opdataMode) ? c.opdataMode : 'separate',
+    showAckMsg: c.showAckMsg !== false,
+    showRowActions: c.showRowActions !== false,
+    showSevCounts: c.showSevCounts !== false,
+    compactRows: c.compactRows === true,
+  };
+}
+let disp = displayOpts({});
+
+// partes fixas do popup que dependem da exibicao (a barra de contadores por severidade)
+function applyDisplay() {
+  const sr = document.querySelector('.stats-row');
+  if (sr) sr.style.display = disp.showSevCounts ? '' : 'none';
+  // a barra e tambem o filtro por severidade: escondida, um filtro salvo nao teria como ser
+  // desfeito e a lista ficaria filtrada sem o usuario ver por que. Limpa (e salva: religar a barra
+  // depois nao pode ressuscitar o filtro antigo).
+  if (!disp.showSevCounts && sevFilter !== null) { sevFilter = null; saveView(); }
+}
+
+// tags na ordem de exibicao: as da prioridade primeiro (na ordem da lista), o resto na ordem do Zabbix
+function orderTags(tags, priority) {
+  if (!priority.length) return tags.slice();
+  const rank = (tg) => { const i = priority.indexOf(String(tg.tag || '').toLowerCase()); return i < 0 ? priority.length : i; };
+  return tags.map((tg, i) => ({ tg, i })).sort((a, b) => rank(a.tg) - rank(b.tg) || a.i - b.i).map(x => x.tg);
+}
+// texto do chip conforme "Nome da tag" (igual ao Zabbix): completo, abreviado (3 letras) ou so o valor.
+// Tag sem valor mostra sempre o nome: e tudo o que ela tem.
+function tagChipText(tg, fmt) {
+  if (!tg.value) return tg.tag;
+  if (fmt === 'none') return tg.value;
+  if (fmt === 'short') return Array.from(String(tg.tag)).slice(0, 3).join('') + ':' + tg.value;
+  return tg.tag + ':' + tg.value;
+}
+function tagRowHtml(p) {
+  const tags = p.tags || [];
+  if (!tags.length || !disp.showTags || disp.compactRows) return '';
+  const ordered = orderTags(tags, disp.tagPriority);
+  const shown = ordered.slice(0, disp.showTags), rest = ordered.slice(disp.showTags);
+  // data-tag sempre "tag:valor" completo: o clique filtra igual, mostre o chip o que mostrar
+  return `<div class="tagrow">${shown.map(tg => `<button class="tagchip" data-tag="${esc(tagLabel(tg))}" title="${esc(tagLabel(tg) + ' - ' + t('tag_filter', lang))}">${esc(tagChipText(tg, disp.tagNameFormat))}</button>`).join('')}${rest.length ? `<span class="tagmore" title="${esc(rest.map(tagLabel).join(', '))}">+${rest.length}</span>` : ''}</div>`;
+}
+
 function buildInstInfo(instStatus) {
   if (!instStatus) return '';
   const entries = Object.values(instStatus).filter(s => s && s.label);
@@ -161,11 +269,16 @@ function buildInstInfo(instStatus) {
     : '';
   if (entries.length <= 1) {
     const e = entries[0];
-    return e ? `(${t('via_' + (e.via || 'session'), lang)})${degradedNote}` : '';
+    if (!e) return '';
+    const fail = e.state === 'no-session' ? ' - ' + t('no_session', lang)
+      : (e.state === 'error' ? ' - ' + t('err', lang) + ': ' + (e.error || '?') : '');
+    return `(${t('via_' + (e.via || 'session'), lang)})${fail}${degradedNote}`;
   }
-  // multi: mostra quantas OK
+  // multi: quantas OK + QUAL caiu e por que (antes "2/3 OK" deixava a falha anonima)
   const ok = entries.filter(e => e.state === 'ok').length;
-  return `(${ok}/${entries.length} OK)${degradedNote}`;
+  const failed = entries.filter(e => e.state && e.state !== 'ok')
+    .map(e => e.label + ': ' + (e.state === 'no-session' ? t('inst_nosess', lang) : String(e.error || t('err', lang)).slice(0, 60)));
+  return `(${ok}/${entries.length} OK)${failed.length ? ' - ' + failed.join('; ') : ''}${degradedNote}`;
 }
 
 // Estado vazio acionavel (sem URL / sem sessao): botao primario que abre as Opcoes.
@@ -195,21 +308,31 @@ function renderList(problems, filtered, groupBy) {
   const rowHtml = (p) => {
     const [lbl, cls] = SEV[p.severity] || ['?', 'info'];
     const snoozed = p.snoozedUntil && p.snoozedUntil > Date.now();
+    // opdata (valor do trigger) como no Zabbix: linha separada, entre parenteses junto do nome, ou nada
+    const op = String(p.opdata || '').trim();
+    // compacto = uma linha so: o opdata "em linha separada" vai junto do nome em vez de sumir
+    const opMode = (disp.compactRows && disp.opdataMode === 'separate') ? 'name' : disp.opdataMode;
+    const nameTxt = (op && opMode === 'name') ? (p.name || '') + ' (' + op + ')' : p.name;
     const instBadge = (multiInst && p.instLabel) ? `<span class="inst-badge">${esc(p.instLabel)}</span>` : '';
     const tags = (p.unseen ? `<span class="tag new" title="${t('tag_new', lang)}">${t('tag_new', lang)}</span>` : '')
       + (p.acknowledged ? '<span class="tag ackd">&#x2713; ACK</span>' : '')
       + (p.maintenance ? `<span class="tag mnt" title="${t('tag_maint', lang)}">MNT</span>`
         : (p.suppressed ? '<span class="tag">SUP</span>' : ''));
+    // botoes desligados (ex.: usuario sem permissao de ACK): o adiado continua visivel, como selo
     const snzBtn = snoozed
-      ? `<button class="snzbtn snoozed" data-ev="${p.eventid}" data-inst="${p.instId || ''}" title="${t('snz_wake', lang)}">SNZ ${snzRemain(p.snoozedUntil)}</button>`
-      : (p.acknowledged ? '' : `<button class="snzbtn" data-ev="${p.eventid}" data-inst="${p.instId || ''}" title="${t('snz_do', lang)}">SNZ</button>`);
-    const ackBtn = p.acknowledged ? '' : `<button class="ackbtn" data-ev="${p.eventid}" data-inst="${p.instId || ''}" title="${t('ack_do', lang)}">ACK</button>`;
-    return `<div class="row ${cls}${p.acknowledged ? ' is-ack' : ''}${snoozed ? ' is-snoozed' : ''}" role="button" tabindex="0" data-ev="${p.eventid}" data-tid="${p.objectid || ''}" data-hostid="${p.hostid || ''}" data-inst="${p.instId || ''}" title="${t('open_problem', lang)}">
+      ? (disp.showRowActions
+        ? `<button class="snzbtn snoozed" data-ev="${p.eventid}" data-inst="${p.instId || ''}" title="${t('snz_wake', lang)}">SNZ ${snzRemain(p.snoozedUntil)}</button>`
+        : `<span class="tag snz" title="${t('snz_do', lang)}">SNZ ${snzRemain(p.snoozedUntil)}</span>`)
+      : (p.acknowledged || !disp.showRowActions ? '' : `<button class="snzbtn" data-ev="${p.eventid}" data-inst="${p.instId || ''}" title="${t('snz_do', lang)}">SNZ</button>`);
+    const ackBtn = (p.acknowledged || !disp.showRowActions) ? '' : `<button class="ackbtn" data-ev="${p.eventid}" data-inst="${p.instId || ''}" title="${t('ack_do', lang)}">ACK</button>`;
+    return `<div class="row ${cls}${p.acknowledged ? ' is-ack' : ''}${snoozed ? ' is-snoozed' : ''}${disp.compactRows ? ' compact' : ''}" role="button" tabindex="0" data-ev="${p.eventid}" data-tid="${p.objectid || ''}" data-hostid="${p.hostid || ''}" data-inst="${p.instId || ''}" title="${t('open_problem', lang)}">
       <span class="badge ${cls}">${lbl}</span>
       <div class="txt">
         ${p.host ? `<div class="host">${instBadge}${esc(p.host)}</div>` : (instBadge ? `<div class="host">${instBadge}</div>` : '')}
-        <div class="name" title="${esc(p.name)}">${esc(p.name)}</div>
-        ${p.acknowledged && p.ackmsg ? `<div class="ackinfo" title="${esc(p.ackmsg)}">&#x2713; ${esc(p.ackmsg)}</div>` : ''}
+        <div class="name" title="${esc(nameTxt)}">${esc(nameTxt)}</div>
+        ${op && opMode === 'separate' ? `<div class="opdata" title="${esc(op)}">${esc(op)}</div>` : ''}
+        ${tagRowHtml(p)}
+        ${disp.showAckMsg && !disp.compactRows && p.acknowledged && p.ackmsg ? `<div class="ackinfo" title="${esc(p.ackmsg)}">&#x2713; ${esc(p.ackmsg)}</div>` : ''}
       </div>
       <div class="meta">${tags}${snzBtn}${ackBtn}<span class="age">${ago(p.clock * 1000)}</span></div>
     </div>`;
@@ -261,13 +384,23 @@ function renderList(problems, filtered, groupBy) {
         chrome.runtime.sendMessage({ action: 'ackEvent', eventid: ev, instId, message }, (r) => {
           if (chrome.runtime.lastError || (r && r.ok)) { setTimeout(load, 600); return; }
           const err = (r && r.error) || t('failed', lang);
-          row.innerHTML = `<span class="ackerr" role="status" aria-live="assertive" title="${esc(err)}">\u2718 ${esc(t('err', lang))}: ${esc(err).slice(0, 80)}</span>`;
+          row.innerHTML = `<span class="ackerr" role="status" aria-live="assertive" title="${esc(err)}">\u2718 ${esc(t('err', lang))}: ${esc(String(err).slice(0, 80))}</span>`; // corta ANTES de escapar: senao corta um &quot; no meio
           setTimeout(load, 4000);
         });
       };
       row.querySelector('.ackok').addEventListener('click', doAck);
       row.querySelector('.ackcancel').addEventListener('click', load);
       input.addEventListener('keydown', (k) => { if (k.key === 'Enter') doAck(); else if (k.key === 'Escape') load(); });
+    });
+  });
+
+  // chip de tag: filtra a lista por ela (preenche o filtro de texto, que casa as tags tambem)
+  el.querySelectorAll('.tagchip').forEach(chip => {
+    chip.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const fb = document.getElementById('filterBox');
+      fb.value = chip.dataset.tag;
+      applyFilter(); saveView();
     });
   });
 
@@ -314,11 +447,11 @@ function renderList(problems, filtered, groupBy) {
   };
   el.querySelectorAll('.row[data-ev]').forEach(row => {
     row.addEventListener('click', (e) => {
-      if (e.target.closest('.ackbtn') || e.target.closest('.ackmsg') || e.target.closest('.snzbtn')) return;
+      if (e.target.closest('.ackbtn') || e.target.closest('.ackmsg') || e.target.closest('.snzbtn') || e.target.closest('.tagchip')) return;
       openRow(row);
     });
     row.addEventListener('keydown', (e) => {
-      if (e.target.closest('.ackbtn') || e.target.closest('.ackmsg') || e.target.closest('.snzbtn')) return;
+      if (e.target.closest('.ackbtn') || e.target.closest('.ackmsg') || e.target.closest('.snzbtn') || e.target.closest('.tagchip')) return;
       if (e.key === 'Enter' || e.key === ' ') { if (e.key === ' ') e.preventDefault(); openRow(row); }
     });
   });
@@ -341,4 +474,6 @@ function ago(ms) {
   return Math.floor(d / DAY_MS) + 'd';
 }
 
-function esc(s) { const d = document.createElement('div'); d.textContent = s || ''; return d.innerHTML; }
+// innerHTML de texto so escapa & < >: as aspas tem que ser na mao, porque esc() tambem vai dentro de
+// atributos (title="...", data-tag="...") e um nome com aspas fecharia o atributo no meio
+function esc(s) { const d = document.createElement('div'); d.textContent = s || ''; return d.innerHTML.replace(/"/g, '&quot;'); }

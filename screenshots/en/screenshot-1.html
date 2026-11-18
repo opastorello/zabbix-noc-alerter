@@ -23,7 +23,7 @@
     <div class="eyebrow"><img src="../../icons/icon48.png" alt="">Zabbix NOC Alerter</div>
     <h1>Alerts the moment<br>it happens</h1>
     <p>A sound alarm and a browser notification the instant a new problem appears in Zabbix, using your open session, an API token, or username and password.</p>
-    <div class="chips"><span class="chip">Chrome extension</span><span class="chip">Uses your open session</span><span class="chip">Nothing hardcoded</span></div>
+    <div class="chips"><span class="chip">Chrome extension</span><span class="chip">Uses your open session</span><span class="chip">Zabbix 6.0 to 8.0 LTS</span></div>
     <div class="by">by <b>@opastorello</b></div>
   </div>
   <div class="col-art">
@@ -42,15 +42,15 @@
       </div>
       <input class="filter-box" placeholder="Filter host or problem" value="">
       <div class="list">
-        <div class="row dis"><span class="badge dis">DIS</span><div class="txt"><div class="host"><span class="inst-badge">PRD</span>db-primary-01</div><div class="name">No response to ICMP ping</div></div><div class="meta"><button class="snzbtn">SNZ</button><button class="ackbtn">ACK</button><span class="age">3m</span></div></div>
-        <div class="row high"><span class="badge high">HIGH</span><div class="txt"><div class="host"><span class="inst-badge">PRD</span>web-prod-02</div><div class="name">High CPU usage (over 90% for 5m)</div></div><div class="meta"><button class="snzbtn">SNZ</button><button class="ackbtn">ACK</button><span class="age">8m</span></div></div>
+        <div class="row dis"><span class="badge dis">DIS</span><div class="txt"><div class="host"><span class="inst-badge">PRD</span>db-primary-01</div><div class="name">No response to ICMP ping</div><div class="tagrow"><button class="tagchip">env:prod</button><button class="tagchip">service:db</button></div></div><div class="meta"><span class="tag new">NEW</span><button class="snzbtn">SNZ</button><button class="ackbtn">ACK</button><span class="age">3m</span></div></div>
+        <div class="row high"><span class="badge high">HIGH</span><div class="txt"><div class="host"><span class="inst-badge">PRD</span>web-prod-02</div><div class="name">High CPU usage (over 90% for 5m)</div><div class="opdata">CPU: 97.3 %</div><div class="tagrow"><button class="tagchip">env:prod</button><button class="tagchip">service:web</button><button class="tagchip">team:sre</button><span class="tagmore">+2</span></div></div><div class="meta"><button class="snzbtn">SNZ</button><button class="ackbtn">ACK</button><span class="age">8m</span></div></div>
         <div class="row high is-ack"><span class="badge high">HIGH</span><div class="txt"><div class="host"><span class="inst-badge">STG</span>k8s-node-07</div><div class="name">Free disk space below 5% on /var</div><div class="ackinfo">&#x2713; Cleaning logs, scaling the node pool</div></div><div class="meta"><span class="tag ackd">&#x2713; ACK</span><span class="age">21m</span></div></div>
-        <div class="row avg"><span class="badge avg">AVG</span><div class="txt"><div class="host"><span class="inst-badge">PRD</span>cache-redis-03</div><div class="name">High memory usage (87%)</div></div><div class="meta"><button class="snzbtn">SNZ</button><button class="ackbtn">ACK</button><span class="age">1h</span></div></div>
+        <div class="row avg"><span class="badge avg">AVG</span><div class="txt"><div class="host"><span class="inst-badge">PRD</span>cache-redis-03</div><div class="name">High memory usage (87%)</div><div class="opdata">13.9 GB / 16 GB</div></div><div class="meta"><button class="snzbtn">SNZ</button><button class="ackbtn">ACK</button><span class="age">1h</span></div></div>
         <div class="row avg is-ack"><span class="badge avg">AVG</span><div class="txt"><div class="host"><span class="inst-badge">STG</span>edge-router-fra</div><div class="name">Interface eth1: link down</div></div><div class="meta"><span class="tag ackd">&#x2713; ACK</span><span class="age">2h</span></div></div>
         <div class="row warn"><span class="badge warn">WARN</span><div class="txt"><div class="host"><span class="inst-badge">STG</span>mail-gateway-01</div><div class="name">SSL certificate expires in 6 days</div></div><div class="meta"><span class="tag">SUP</span><button class="snzbtn">SNZ</button><button class="ackbtn">ACK</button><span class="age">1d</span></div></div>
         <div class="row warn"><span class="badge warn">WARN</span><div class="txt"><div class="host"><span class="inst-badge">PRD</span>backup-nas-02</div><div class="name">Zabbix agent unreachable</div></div><div class="meta"><span class="tag mnt" title="In maintenance">MNT</span><span class="age">2d</span></div></div>
       </div>
-      <footer><div class="credit">Zabbix NOC Alerter v0.4.0 - @opastorello</div></footer>
+      <footer><div class="credit">Zabbix NOC Alerter - @opastorello</div></footer>
     </div></div>
   </div>
 </div>

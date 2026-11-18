@@ -10,8 +10,9 @@ const SOUNDS = [
 ];
 const MAX_INSTANCES = 8;
 const NUM = ['pollInterval', 'repeatInterval'];
-const SEL = ['minSeverity', 'soundSev5', 'soundSev4', 'soundSev3', 'soundSev2', 'soundSev1'];
-const CHK = ['soundEnabled', 'notificationsEnabled', 'notifyResolved', 'badgeUnseen', 'repeatAlarm', 'nagNotify', 'suppressDuringMeeting', 'meetSuppressNotif', 'meetSuppressSound', 'workingTimeOnly', 'ignoreAckd', 'ignoreSuppressed', 'ignoreMaintenance'];
+const SEL = ['minSeverity', 'soundSev5', 'soundSev4', 'soundSev3', 'soundSev2', 'soundSev1', 'showTags', 'tagNameFormat', 'opdataMode'];
+const SEL_NUM = ['minSeverity', 'showTags']; // selects cujo valor e numero no config
+const CHK = ['soundEnabled', 'notificationsEnabled', 'notifyResolved', 'badgeUnseen', 'repeatAlarm', 'nagNotify', 'suppressDuringMeeting', 'meetSuppressNotif', 'meetSuppressSound', 'workingTimeOnly', 'blindSpotAlert', 'ignoreAckd', 'ignoreSuppressed', 'ignoreMaintenance', 'showAckMsg', 'showRowActions', 'showSevCounts', 'compactRows', 'notifOpdata', 'notifButtons'];
 
 let currentLang = 'pt';
 
@@ -138,6 +139,7 @@ function createInstanceCard(inst, idx) {
   const card = document.createElement('div');
   card.className = 'inst-card' + (inst.enabled ? '' : ' disabled');
   card.dataset.idx = idx;
+  card.dataset.instId = inst.id || ''; // id ESTAVEL: remover a #1 nao pode fazer a #2 virar outra instancia
   const hasLabel = (inst.label || '').trim();
   // configs antigas (sem authType): token preenchido = token, vazio = sessao
   const authType = inst.authType || ((inst.token || '').trim() ? 'token' : 'session');
@@ -186,6 +188,11 @@ function createInstanceCard(inst, idx) {
         <input type="text" class="inst-groups" value="${esc(inst.hostGroups || '')}" data-i18n-ph="inst_groups_ph" placeholder="${esc(t('inst_groups_ph', currentLang))}" autocomplete="off">
         <div class="desc" data-i18n="inst_groups_desc">${esc(t('inst_groups_desc', currentLang))}</div>
       </div>
+      <div class="inst-field">
+        <label data-i18n="inst_tags">${esc(t('inst_tags', currentLang))}</label>
+        <input type="text" class="inst-tags" value="${esc(inst.tags || '')}" placeholder="service:web, env=prod, team" autocomplete="off">
+        <div class="desc" data-i18n="inst_tags_desc">${esc(t('inst_tags_desc', currentLang))}</div>
+      </div>
       <div class="inst-actions">
         <button class="btn-test inst-test-btn" data-i18n="inst_test">${esc(t('inst_test', currentLang))}</button>
         <span class="inst-status"></span>
@@ -221,10 +228,18 @@ function addInstance() {
   const current = container.querySelectorAll('.inst-card').length;
   if (current >= MAX_INSTANCES) return;
   const idx = current;
-  const inst = { id: 'inst' + (Date.now() % 100000), label: '', url: '', authType: 'session', token: '', username: '', password: '', enabled: true };
+  const inst = { id: newInstId(), label: '', url: '', authType: 'session', token: '', username: '', password: '', enabled: true };
   container.appendChild(createInstanceCard(inst, idx)); // novo card ja vem expandido
   // atualizar visibilidade do botao
   document.getElementById('addInstanceBtn').style.display = (idx + 1) >= MAX_INSTANCES ? 'none' : '';
+}
+
+// id unico pra uma instancia nova (os existentes sao preservados; nao renumera por posicao)
+function newInstId() {
+  const used = new Set([...document.querySelectorAll('#instancesContainer .inst-card')].map(c => c.dataset.instId));
+  let id;
+  do { id = 'inst' + Math.floor(Math.random() * 1e9).toString(36); } while (used.has(id));
+  return id;
 }
 
 function removeInstance(card) {
@@ -274,7 +289,9 @@ function collectInstances() {
   const instances = [];
   cards.forEach((card, idx) => {
     instances.push({
-      id: 'inst' + (idx + 1),
+      // id estavel (antes era 'inst' + posicao: remover a #1 renumerava as outras, e snooze, estado
+      // conhecido e o alvo dos botoes das notificacoes passavam a apontar pra outro Zabbix)
+      id: card.dataset.instId || ('inst' + (idx + 1)),
       label: card.querySelector('.inst-label-input').value.trim() || ('Zabbix ' + (idx + 1)),
       url: card.querySelector('.inst-url').value.trim(),
       authType: card.querySelector('.inst-auth').value,
@@ -283,6 +300,7 @@ function collectInstances() {
       username: card.querySelector('.inst-user').value.trim(),
       password: card.querySelector('.inst-pass').value,
       hostGroups: card.querySelector('.inst-groups').value.trim(),
+      tags: card.querySelector('.inst-tags').value.trim(),
       enabled: card.querySelector('.inst-enabled').checked
     });
   });
@@ -304,12 +322,20 @@ function loadSettings() {
 
     // Global settings
     NUM.forEach(id => { const el = document.getElementById(id); if (c[id] != null) el.value = c[id]; });
-    SEL.forEach(id => { const el = document.getElementById(id); if (c[id] != null) el.value = String(c[id]); });
+    SEL.forEach(id => {
+      const el = document.getElementById(id);
+      if (c[id] != null) el.value = String(c[id]);
+      // valor que nao existe na lista (arquivo importado editado a mao, versao futura): o <select> ficaria
+      // em branco e o proximo Salvar gravaria lixo (showTags '' -> 0 = esconde todas as tags). Cai no padrao.
+      if (el.selectedIndex < 0) el.value = (el.querySelector('option[selected]') || el.options[0]).value;
+    });
     CHK.forEach(id => { const el = document.getElementById(id); el.checked = !!c[id]; });
     document.getElementById('meetSubOptions').classList.toggle('hidden', !c.suppressDuringMeeting);
     document.getElementById('volume').value = c.volume ?? 0.8;
     document.getElementById('maxAgeDays').value = c.maxAgeDays ?? 0;
+    document.getElementById('blindSpotMinutes').value = c.blindSpotMinutes ?? 2;
     document.getElementById('excludePatterns').value = c.excludePatterns || '';
+    document.getElementById('tagPriority').value = c.tagPriority || '';
     updateVolLabel();
     checkWorkPeriod(); // depois de aplicar o config: valida/desativa o checkbox de working time
   });
@@ -326,12 +352,14 @@ function saveSettings() {
   });
   SEL.forEach(id => {
     const v = document.getElementById(id).value;
-    cfg[id] = id === 'minSeverity' ? Number(v) : v;
+    cfg[id] = SEL_NUM.includes(id) ? Number(v) : v;
   });
   CHK.forEach(id => { cfg[id] = document.getElementById(id).checked; });
   cfg.volume = parseFloat(document.getElementById('volume').value);
   cfg.maxAgeDays = Math.max(0, parseInt(document.getElementById('maxAgeDays').value, 10) || 0);
+  cfg.blindSpotMinutes = Math.min(60, Math.max(1, parseInt(document.getElementById('blindSpotMinutes').value, 10) || 2));
   cfg.excludePatterns = document.getElementById('excludePatterns').value.trim();
+  cfg.tagPriority = document.getElementById('tagPriority').value.trim();
   cfg.lang = document.getElementById('lang').value;
 
   chrome.runtime.sendMessage({ action: 'setConfig', config: cfg }, () => {
@@ -346,8 +374,12 @@ function resetSettings() {
     instances: [], excludePatterns: '', maxAgeDays: 0, pollInterval: 15, repeatAlarm: true, nagNotify: true, repeatInterval: 60,
     minSeverity: 4, soundEnabled: true, notificationsEnabled: true, notifyResolved: true, volume: 0.25,
     soundSev5: 'klaxon', soundSev4: 'siren', soundSev3: 'pulse', soundSev2: 'beepbeep', soundSev1: 'chime',
-    ignoreAckd: false, ignoreSuppressed: true, ignoreMaintenance: true, badgeUnseen: false, muted: false,
-    suppressDuringMeeting: true, meetSuppressNotif: true, meetSuppressSound: true, workingTimeOnly: false, lang: currentLang
+    ignoreAckd: false, ignoreSuppressed: true, ignoreMaintenance: true, badgeUnseen: false, muted: false, mutedUntil: 0, mutedAt: 0,
+    suppressDuringMeeting: true, meetSuppressNotif: true, meetSuppressSound: true, workingTimeOnly: false,
+    blindSpotAlert: true, blindSpotMinutes: 2,
+    showTags: 3, tagNameFormat: 'full', tagPriority: '', opdataMode: 'separate',
+    showAckMsg: true, showRowActions: true, showSevCounts: true, compactRows: false, notifOpdata: true, notifButtons: true,
+    lang: currentLang
   };
   chrome.runtime.sendMessage({ action: 'setConfig', config: defaults }, () => {
     loadSettings();
@@ -360,6 +392,8 @@ function exportSettings() {
     const cfg = { ...(r?.config || {}) };
     delete cfg.apiToken; // legado: nao exporta o segredo
     delete cfg.muted;    // estado transitorio
+    delete cfg.mutedUntil;
+    delete cfg.mutedAt;
     // multi-instancia: nao exporta os tokens nem as senhas das instancias (segredo)
     if (Array.isArray(cfg.instances)) cfg.instances = cfg.instances.map(i => ({ ...i, token: '', password: '' }));
     const blob = new Blob([JSON.stringify(cfg, null, 2)], { type: 'application/json' });
@@ -378,8 +412,9 @@ function importSettings(file) {
     try {
       const data = JSON.parse(reader.result);
       if (!data || typeof data !== 'object' || Array.isArray(data)) throw new Error('invalid');
-      delete data.apiToken; // import nunca sobrescreve o token do usuario
-      chrome.runtime.sendMessage({ action: 'setConfig', config: data }, () => {
+      // importConfig (nao setConfig): o background preserva token/senha locais da mesma URL,
+      // ja que o arquivo exportado nunca carrega segredo
+      chrome.runtime.sendMessage({ action: 'importConfig', config: data }, () => {
         loadSettings();
         showAlert(t('import_ok', lang), 'success');
       });
