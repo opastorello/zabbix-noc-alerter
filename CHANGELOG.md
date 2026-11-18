@@ -7,6 +7,8 @@ in `manifest.json`.
 
 ## [Unreleased]
 
+## [0.6.0]
+
 ### Added
 - Timed mute: the mute button now offers 15 min, 1 h, 4 h, "until end of
   shift" (when the server's working time is readable) or "until I unmute".
@@ -62,6 +64,10 @@ in `manifest.json`.
   filtered by the wrong value.
 - A long ACK error shown in the popup is cut at 80 characters before it is
   escaped, so it no longer ends in a broken entity like `&quo`.
+- A settings file with a value an Options list does not know (hand-edited,
+  or from a newer version) no longer leaves that list blank so the next Save
+  stores an empty value (for the tag count, that hid every tag); the list
+  falls back to its default.
 - Problems from a disabled host no longer stay in the list; Zabbix does not
   close them on its own and already hides them in its own UI (GitHub #27).
 - A problem that only stops being shown (its host or trigger got disabled, it
@@ -115,6 +121,8 @@ in `manifest.json`.
   the sound/notification options) is now decided in one place for new
   problems, snooze expiry, the re-alarm and the resolved notification, instead
   of being checked separately in each path.
+- The test suite now also loads the real `popup.js` (with a minimal fake DOM),
+  so the popup row rendering and the display options have automated tests.
 
 ## [0.5.0]
 
