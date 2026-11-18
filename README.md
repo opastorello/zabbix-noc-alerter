@@ -41,7 +41,7 @@ right in your browser, while you work on anything else.
 - 🛠️ **Maintenance-aware:** problems in a maintenance window get an MNT tag and stay silent (or hide them).
 - 🔍 **Live filter** in the popup by host, problem name or tag, or by clicking a severity or a tag chip; **sort** (severity, age, newest, host) and **group by host or instance**; problems that appeared since you last looked are tagged NEW.
 - 💤 **Snooze a single problem** (15 min to 4 h) without the global mute; it re-alerts when the snooze ends.
-- 🖥️ **Shows the host** (and the instance, when you watch more than one), the trigger's **operational data** ("CPU 97%") and its **tags**, in the list and in the notification.
+- 🖥️ **Shows the host** (and the instance, when you watch more than one), the trigger's **operational data** ("CPU 97%") and its **tags** in the list; the host and the operational data also go in the notification.
 - 🎛️ **Choose what is shown:** how many tags per problem, the tag name (full, shortened or value only) and which tags come first, the same settings as the Problems page in Zabbix; operational data on its own line, with the name or hidden; the ACK message, the SNZ/ACK buttons and the severity counters on or off; a compact one-line mode; and whether notifications carry the value and the buttons.
 - ✅ **Acknowledge or snooze straight from the notification** (ACK / Snooze 15 min buttons), or from the popup with a message; see any existing ack.
 - 🟢 **Resolved notification** when a problem recovers.

@@ -41,7 +41,7 @@ notificação, direto no navegador, enquanto você trabalha em qualquer outra co
 - 🛠️ **Ciente de manutenção:** problemas em janela de manutenção ganham a tag MNT e ficam silenciosos (ou você esconde).
 - 🔍 **Filtro ao vivo** no popup por host, nome do problema ou tag, ou clicando numa severidade ou num chip de tag; **ordenar** (severidade, idade, mais recente, host) e **agrupar por host ou instância**; problemas que surgiram desde a última olhada ganham a tag NOVO.
 - 💤 **Adiar (snooze) um problema só** (15 min a 4 h) sem o mudo global; ao acabar, ele re-alerta.
-- 🖥️ **Mostra o host** (e a instância, quando você monitora mais de uma), os **dados operacionais** do trigger ("CPU 97%") e as **tags**, na lista e na notificação.
+- 🖥️ **Mostra o host** (e a instância, quando você monitora mais de uma), os **dados operacionais** do trigger ("CPU 97%") e as **tags** na lista; o host e os dados operacionais vão também na notificação.
 - 🎛️ **Escolha o que aparece:** quantas tags por problema, o nome da tag (completo, abreviado ou só o valor) e quais tags vêm primeiro, as mesmas opções da tela de Problemas do Zabbix; dados operacionais em linha própria, junto do nome ou escondidos; mensagem do ACK, botões SNZ/ACK e contadores por severidade liga/desliga; modo compacto de uma linha; e se a notificação traz o valor e os botões.
 - ✅ **Ack ou adiar direto da notificação** (botões ACK / Adiar 15 min), ou pelo popup com mensagem; mostra o ack existente.
 - 🟢 **Notificação de resolvido** quando um problema recupera.
